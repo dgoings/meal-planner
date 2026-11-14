@@ -69,13 +69,35 @@ describe("RecipeDetail", () => {
     const title = screen.getByLabelText("Title");
     await user.clear(title);
     await user.type(title, "Roasted tomato soup");
+    expect(screen.queryByRole("button", { name: "Add to grocery list" })).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Tags"), "Weeknight{Enter}");
+    await user.click(screen.getByRole("button", { name: "Remove tag Dinner" }));
     await user.click(screen.getByRole("button", { name: "Save recipe" }));
     expect(mocks.mutation).toHaveBeenCalledWith(
       expect.objectContaining({
         recipeId: "recipe-1",
         title: "Roasted tomato soup",
         instructions: [{ position: 1, text: "Simmer." }],
+        categories: ["Weeknight"],
       }),
     );
+    expect(screen.getByRole("button", { name: "Edit recipe" })).toBeInTheDocument();
+  });
+
+  it("uploads a photo when the recipe has none", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ storageId: "storage-1" })));
+    vi.stubGlobal("fetch", fetchMock);
+    mocks.mutation.mockResolvedValueOnce("https://upload.example.com").mockResolvedValueOnce(true);
+    render(<RecipeDetail recipeId="recipe-1" />);
+
+    await user.click(screen.getByRole("button", { name: "Edit recipe" }));
+    const photo = new File(["photo"], "soup.png", { type: "image/png" });
+    await user.upload(screen.getByLabelText("Recipe photo"), photo);
+
+    expect(fetchMock).toHaveBeenCalledWith("https://upload.example.com", expect.objectContaining({ method: "POST", body: photo }));
+    expect(mocks.mutation).toHaveBeenCalledWith({ recipeId: "recipe-1", storageId: "storage-1" });
+    expect(await screen.findByText("Photo added.")).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 });

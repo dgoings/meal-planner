@@ -1,4 +1,5 @@
 import { convexTest } from "convex-test";
+import { Blob as NodeBlob } from "node:buffer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -939,6 +940,62 @@ describe("editable recipe cards", () => {
         warnings: ["Check the cooking time."],
       },
     });
+  });
+});
+
+describe("recipe tags and photos", () => {
+  it("normalizes tags and lets only the owner add a first photo", async () => {
+    const t = initTest();
+    const ownerId = await createUser(t, "TagOwner");
+    const otherId = await createUser(t, "TagOther");
+    const recipeId = await createRecipe(t, "taggable", { requestedBy: ownerId });
+    const asOwner = t.withIdentity({ subject: ownerId });
+    const asOther = t.withIdentity({ subject: otherId });
+
+    await asOwner.mutation(api.recipeCards.updateCard, {
+      recipeId,
+      categories: [" Weeknight ", "weeknight", "", "One  pan"],
+    });
+    expect((await t.run((ctx) => ctx.db.get(recipeId)))?.categories).toEqual([
+      "Weeknight",
+      "One pan",
+    ]);
+    await expect(
+      asOwner.mutation(api.recipeCards.updateCard, {
+        recipeId,
+        categories: Array.from({ length: 21 }, (_, index) => `tag ${index}`),
+      }),
+    ).rejects.toThrow(/at most 20 tags/);
+
+    // convex-test does not record a stored blob's content type, so set it directly.
+    const store = (type: string) =>
+      t.run(async (ctx) => {
+        const storageId = await ctx.storage.store(new NodeBlob(["image"], { type }) as Blob);
+        await ctx.db.patch(storageId as never, { contentType: type } as never);
+        return storageId;
+      });
+    const exists = async (storageId: Id<"_storage">) =>
+      (await t.run((ctx) => ctx.db.system.get(storageId))) !== null;
+
+    await expect(t.mutation(api.recipeCards.generateImageUploadUrl, {})).rejects.toThrow(
+      /Unauthenticated/,
+    );
+    await expect(
+      asOther.mutation(api.recipeCards.setImage, { recipeId, storageId: await store("image/png") }),
+    ).rejects.toThrow(/Forbidden/);
+
+    const textId = await store("text/plain");
+    expect(await asOwner.mutation(api.recipeCards.setImage, { recipeId, storageId: textId })).toBe(false);
+    expect(await exists(textId)).toBe(false);
+
+    const imageId = await store("image/png");
+    expect(await asOwner.mutation(api.recipeCards.setImage, { recipeId, storageId: imageId })).toBe(true);
+    expect((await t.run((ctx) => ctx.db.get(recipeId)))?.imageStorageId).toBe(imageId);
+
+    const secondId = await store("image/png");
+    expect(await asOwner.mutation(api.recipeCards.setImage, { recipeId, storageId: secondId })).toBe(false);
+    expect(await exists(secondId)).toBe(false);
+    expect((await t.run((ctx) => ctx.db.get(recipeId)))?.imageStorageId).toBe(imageId);
   });
 });
 

@@ -14,6 +14,17 @@ const instructionValidator = v.object({
   section: v.optional(v.string()),
 });
 
+const MAX_TAGS = 20;
+const MAX_TAG_LENGTH = 100;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set([
+  "image/avif",
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
 const nullableString = v.union(v.string(), v.null());
 const nullableNumber = v.union(v.number(), v.null());
 
@@ -241,12 +252,30 @@ export const updateCard = mutation({
     cookTimeMinutes: v.optional(nullableNumber),
     totalTimeMinutes: v.optional(nullableNumber),
     instructions: v.optional(v.array(instructionValidator)),
+    categories: v.optional(v.array(v.string())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await requireUser(ctx);
     await requireOwnedRecipe(ctx, userId, args.recipeId);
     const patch: Partial<Doc<"recipes">> = { updatedAt: Date.now() };
+    if (args.categories !== undefined) {
+      const seen = new Set<string>();
+      const categories: string[] = [];
+      for (const value of args.categories) {
+        const tag = value.trim().replace(/\s+/g, " ");
+        if (tag.length === 0 || seen.has(tag.toLowerCase())) continue;
+        if (tag.length > MAX_TAG_LENGTH) {
+          throw new Error(`Each tag must be at most ${MAX_TAG_LENGTH} characters`);
+        }
+        seen.add(tag.toLowerCase());
+        categories.push(tag);
+      }
+      if (categories.length > MAX_TAGS) {
+        throw new Error(`A recipe can have at most ${MAX_TAGS} tags`);
+      }
+      patch.categories = categories;
+    }
     if (args.title !== undefined) {
       const title = args.title.trim();
       if (title.length === 0 || title.length > 300) {
@@ -292,6 +321,43 @@ export const updateCard = mutation({
     }
     await ctx.db.patch(args.recipeId, patch);
     return null;
+  },
+});
+
+export const generateImageUploadUrl = mutation({
+  args: {},
+  returns: v.string(),
+  handler: async (ctx) => {
+    await requireUser(ctx);
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+export const setImage = mutation({
+  args: { recipeId: v.id("recipes"), storageId: v.id("_storage") },
+  returns: v.boolean(),
+  handler: async (ctx, { recipeId, storageId }) => {
+    const userId = await requireUser(ctx);
+    const recipe = await requireOwnedRecipe(ctx, userId, recipeId);
+    const file = await ctx.db.system.get(storageId);
+    if (file === null) throw new Error("Uploaded image was not found");
+    const accepted =
+      recipe.imageStorageId === undefined &&
+      recipe.imageUrl === undefined &&
+      file.contentType !== undefined &&
+      ALLOWED_IMAGE_TYPES.has(file.contentType) &&
+      file.size > 0 &&
+      file.size <= MAX_IMAGE_BYTES;
+    if (!accepted) {
+      // Returning instead of throwing lets the deletion of the rejected upload commit.
+      await ctx.storage.delete(storageId);
+      return false;
+    }
+    await ctx.db.patch(recipeId, {
+      imageStorageId: storageId,
+      updatedAt: Date.now(),
+    });
+    return true;
   },
 });
 
