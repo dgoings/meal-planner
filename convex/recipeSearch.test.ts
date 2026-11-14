@@ -20,6 +20,51 @@ function tavilyResponse(results: unknown[], status = 200) {
   });
 }
 
+function recipePage(rating?: { value: number | string; count?: number | string; best?: number }) {
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Recipe",
+    name: "Recipe",
+    ...(rating === undefined
+      ? {}
+      : {
+          aggregateRating: {
+            "@type": "AggregateRating",
+            ratingValue: rating.value,
+            ...(rating.count === undefined ? {} : { ratingCount: rating.count }),
+            ...(rating.best === undefined ? {} : { bestRating: rating.best }),
+          },
+        }),
+  };
+  return new Response(
+    `<html><script type="application/ld+json">${JSON.stringify(jsonLd)}</script><p>Recipe</p></html>`,
+    { status: 200, headers: { "content-type": "text/html" } },
+  );
+}
+
+// Routes the search request to `search` and every recipe-page request to
+// `page`, and counts only the search requests that spend Tavily credits.
+function stubWeb(
+  search: () => Response | Promise<Response>,
+  page: (url: string) => Response | Promise<Response> = () => recipePage(),
+) {
+  const searchMock = vi.fn((url: string, init: RequestInit) => {
+    void url;
+    void init;
+    return search();
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      return url === "https://api.tavily.com/search"
+        ? searchMock(url, init ?? {})
+        : page(url);
+    }),
+  );
+  return searchMock;
+}
+
 const stew = {
   title: "Smoky Lentil Stew",
   url: "https://www.example.com/recipes/smoky-lentil-stew?utm_source=search",
@@ -38,7 +83,7 @@ afterEach(() => {
 
 describe("recipe search", () => {
   it("returns cleaned individual recipe pages and drops roundups and duplicates", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
+    const fetchMock = stubWeb(() =>
       tavilyResponse([
         stew,
         { ...stew, url: "https://www.example.com/recipes/smoky-lentil-stew" },
@@ -49,7 +94,6 @@ describe("recipe search", () => {
         "not a result",
       ]),
     );
-    vi.stubGlobal("fetch", fetchMock);
     const { asUser } = await signedIn();
 
     await expect(
@@ -65,16 +109,15 @@ describe("recipe search", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://api.tavily.com/search");
-    expect(init.headers.Authorization).toBe("Bearer tvly-test");
-    expect(JSON.parse(init.body)).toMatchObject({
+    expect(init.headers).toMatchObject({ Authorization: "Bearer tvly-test" });
+    expect(JSON.parse(String(init.body))).toMatchObject({
       query: "lentil stew recipe",
       search_depth: "basic",
     });
   });
 
   it("serves a repeated query from the cache and refreshes it once stale", async () => {
-    const fetchMock = vi.fn().mockImplementation(async () => tavilyResponse([stew]));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubWeb(() => tavilyResponse([stew]));
     const { t, asUser } = await signedIn();
 
     await asUser.action(api.recipeSearch.search, { query: "lentil stew" });
@@ -95,22 +138,61 @@ describe("recipe search", () => {
   });
 
   it("limits results to six", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        tavilyResponse(
-          Array.from({ length: 10 }, (_, index) => ({
-            title: `Stew ${index}`,
-            url: `https://example.com/recipes/stew-${index}`,
-            content: "",
-          })),
-        ),
+    stubWeb(() =>
+      tavilyResponse(
+        Array.from({ length: 10 }, (_, index) => ({
+          title: `Stew ${index}`,
+          url: `https://example.com/recipes/stew-${index}`,
+          content: "",
+        })),
       ),
     );
     const { asUser } = await signedIn();
     await expect(
       asUser.action(api.recipeSearch.search, { query: "stew" }),
     ).resolves.toHaveLength(6);
+  });
+
+  it("puts the best-rated recipes first and unreachable pages last", async () => {
+    const pages: Record<string, () => Response> = {
+      unrated: () => recipePage(),
+      "few-votes": () => recipePage({ value: 5, count: 3 }),
+      blocked: () => new Response("Forbidden", { status: 403 }),
+      popular: () => recipePage({ value: "4.7", count: "2,150" }),
+      percent: () => recipePage({ value: 90, count: 400, best: 100 }),
+      offline: () => {
+        throw new Error("offline");
+      },
+      "no-count": () => recipePage({ value: 4.9 }),
+    };
+    stubWeb(
+      () =>
+        tavilyResponse(
+          Object.keys(pages).map((slug) => ({
+            title: slug,
+            url: `https://example.com/recipes/${slug}`,
+            content: "",
+          })),
+        ),
+      (url) => pages[url.split("/").pop()!](),
+    );
+    const { asUser } = await signedIn();
+
+    const results = await asUser.action(api.recipeSearch.search, { query: "stew" });
+
+    expect(results.map((result) => result.title)).toEqual([
+      "popular",
+      "percent",
+      "few-votes",
+      "no-count",
+      "unrated",
+      "blocked",
+    ]);
+    expect(results[0]).toMatchObject({ rating: 4.7, ratingCount: 2150 });
+    expect(results[1]).toMatchObject({ rating: 4.5, ratingCount: 400 });
+    expect(results[3]).toMatchObject({ rating: 4.9 });
+    expect(results[3]).not.toHaveProperty("ratingCount");
+    expect(results[4]).not.toHaveProperty("rating");
   });
 
   it("requires a signed-in user and a usable query", async () => {

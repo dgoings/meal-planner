@@ -5,7 +5,9 @@ import { action, internalMutation, internalQuery } from "./_generated/server";
 import {
   MAX_SEARCH_QUERY_LENGTH,
   normalizeSearchQuery,
+  rankByRating,
   selectRecipeResults,
+  type RecipePageRating,
   type RecipeSearchResult,
 } from "./lib/recipeSearch";
 
@@ -29,6 +31,8 @@ const searchResult = v.object({
   title: v.string(),
   description: v.string(),
   source: v.string(),
+  rating: v.optional(v.number()),
+  ratingCount: v.optional(v.number()),
 });
 
 export const cached = internalQuery({
@@ -125,7 +129,16 @@ export const search = action({
     const apiKey = process.env.TAVILY_API_KEY?.trim();
     if (!apiKey) throw new ConvexError({ code: "search_not_configured" });
 
-    const results = await searchTavily(apiKey, normalizedQuery);
+    const candidates = await searchTavily(apiKey, normalizedQuery);
+    let pages: RecipePageRating[] = [];
+    try {
+      pages = await ctx.runAction(internal.recipeWebScrape.ratingsForUrls, {
+        urls: candidates.map((candidate) => candidate.url),
+      });
+    } catch {
+      // Ratings only reorder results; search still works without them.
+    }
+    const results = rankByRating(candidates, pages);
     await ctx.runMutation(internal.recipeSearch.store, {
       normalizedQuery,
       results,

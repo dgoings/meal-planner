@@ -3,11 +3,16 @@
 import { load } from "cheerio";
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
-import { buildRecipeScrapePayload } from "./lib/recipeScrape";
+import {
+  buildRecipeScrapePayload,
+  extractRecipeJsonLd,
+  extractRecipeRating,
+} from "./lib/recipeScrape";
 import { isPublicUrlHostname } from "./lib/urls";
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
+const RATING_FETCH_TIMEOUT_MS = 8_000;
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
 const USER_AGENT =
@@ -65,9 +70,9 @@ function htmlToMarkdown(html: string) {
   return parts.join("\n").trim();
 }
 
-async function fetchHtml(url: URL) {
+async function fetchHtml(url: URL, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let currentUrl = url;
   let response: Response;
   try {
@@ -150,4 +155,31 @@ export const scrapePage = internalAction({
       },
     });
   },
+});
+
+export const ratingsForUrls = internalAction({
+  args: { urls: v.array(v.string()) },
+  returns: v.array(
+    v.object({
+      reachable: v.boolean(),
+      rating: v.optional(v.number()),
+      ratingCount: v.optional(v.number()),
+    }),
+  ),
+  handler: async (_ctx, { urls }) =>
+    await Promise.all(
+      urls.map(async (url) => {
+        try {
+          const fetched = await fetchHtml(
+            safeRecipeUrl(url),
+            RATING_FETCH_TIMEOUT_MS,
+          );
+          if (fetched.statusCode >= 400) return { reachable: false };
+          const jsonLd = extractRecipeJsonLd(fetched.html);
+          return { reachable: true, ...extractRecipeRating(jsonLd?.value) };
+        } catch {
+          return { reachable: false };
+        }
+      }),
+    ),
 });

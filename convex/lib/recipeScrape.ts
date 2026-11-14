@@ -70,6 +70,45 @@ function normalizedImageUrl(value: unknown, baseUrl?: string) {
   }
 }
 
+function positiveNumber(value: unknown) {
+  const number =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value.replace(/,/g, "").trim())
+        : NaN;
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+export function extractRecipeRating(recipeJsonLd: string | undefined): {
+  rating?: number;
+  ratingCount?: number;
+} {
+  if (!recipeJsonLd) return {};
+  let recipe: Record<string, unknown> | undefined;
+  try {
+    recipe = findRecipeNode(JSON.parse(recipeJsonLd));
+  } catch {
+    return {};
+  }
+  const aggregate = Array.isArray(recipe?.aggregateRating)
+    ? recipe.aggregateRating[0]
+    : recipe?.aggregateRating;
+  if (typeof aggregate !== "object" || aggregate === null) return {};
+  const record = aggregate as Record<string, unknown>;
+  const value = positiveNumber(record.ratingValue);
+  if (value === undefined) return {};
+
+  // Most sites rate out of 5, but some publish percentages or 10-point scales.
+  const best = positiveNumber(record.bestRating) ?? 5;
+  const rating = Math.round(Math.min(5, (value / best) * 5) * 10) / 10;
+  const count = positiveNumber(record.ratingCount ?? record.reviewCount);
+  return {
+    rating,
+    ...(count === undefined ? {} : { ratingCount: Math.round(count) }),
+  };
+}
+
 export function extractRecipeImageUrl(
   recipeJsonLd: string | undefined,
   metadata: Record<string, unknown>,

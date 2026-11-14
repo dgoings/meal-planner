@@ -320,6 +320,8 @@ export default defineSchema({
         title: v.string(),
         description: v.string(),
         source: v.string(),
+        rating: v.optional(v.number()),
+        ratingCount: v.optional(v.number()),
       }),
     ),
     createdAt: v.number(),

@@ -2,7 +2,7 @@
 
 import { useAction, useMutation } from "convex/react";
 import { ConvexError } from "convex/values";
-import { BookPlus, ExternalLink, LoaderCircle, Search } from "lucide-react";
+import { BookPlus, ExternalLink, LoaderCircle, Search, Star } from "lucide-react";
 import { useRef, useState } from "react";
 import { ImportResultDialog } from "@/components/discovery/import-result-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -18,6 +18,8 @@ type SearchResult = {
   title: string;
   description: string;
   source: string;
+  rating?: number;
+  ratingCount?: number;
 };
 
 function searchErrorMessage(error: unknown) {
@@ -132,6 +134,18 @@ export function RecipeSearch() {
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{result.source}</p>
                       <h3 className="mt-1">{result.title}</h3>
+                      {result.rating !== undefined && (
+                        <p className="mt-2 flex items-center gap-1 text-sm font-bold">
+                          <Star className="fill-current text-primary" size={15} aria-hidden />
+                          <span className="sr-only">Rated</span>
+                          {result.rating.toFixed(1)}
+                          {result.ratingCount !== undefined && (
+                            <span className="font-normal text-muted-foreground">
+                              ({result.ratingCount.toLocaleString("en-US")} ratings)
+                            </span>
+                          )}
+                        </p>
+                      )}
                       {result.description && (
                         <p className="mt-2 text-sm leading-6 text-muted-foreground">{result.description}</p>
                       )}
