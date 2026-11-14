@@ -119,6 +119,9 @@ export function RecipeSearch() {
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
+        <p className="sr-only" role="status">
+          {results !== null && results.length > 0 ? `${results.length} ${results.length === 1 ? "recipe" : "recipes"} found for ${searchedQuery}` : ""}
+        </p>
         {results !== null && results.length === 0 && (
           <Alert className="mt-5">
             <AlertTitle>No recipes found</AlertTitle>

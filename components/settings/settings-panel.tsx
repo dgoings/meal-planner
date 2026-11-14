@@ -92,7 +92,7 @@ function SettingsContent({ user }: { user: Doc<"users"> }) {
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="grid gap-2 text-sm font-bold">
                 Name
-                <Input required maxLength={100} value={name} onChange={(event) => { setName(event.target.value); setProfileState("idle"); }} />
+                <Input required maxLength={100} autoComplete="name" value={name} onChange={(event) => { setName(event.target.value); setProfileState("idle"); }} />
               </label>
               <label className="grid gap-2 text-sm font-bold">
                 Account email

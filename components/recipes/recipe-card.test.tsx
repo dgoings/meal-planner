@@ -55,7 +55,7 @@ describe("RecipeCard", () => {
   it("shows the pointer cursor across selectable recipe options", () => {
     render(<RecipeCard recipe={recipe} onSelect={vi.fn()} />);
 
-    expect(screen.getByRole("button", { name: "Choose Green Orzo" })).toHaveClass(
+    expect(screen.getByRole("button", { name: "Choose recipe: Green Orzo" })).toHaveClass(
       "recipe-selection-button",
       "cursor-pointer",
     );

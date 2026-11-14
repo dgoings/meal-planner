@@ -218,7 +218,7 @@ export function RecipeEditor({
           <Card>
             <CardContent className="stack">
               <h2 className="section-heading">Details</h2>
-              <label className="grid gap-2 text-sm font-bold">Title<Input ref={titleRef} defaultValue={recipe.title} maxLength={300} /></label>
+              <label className="grid gap-2 text-sm font-bold">Title<Input ref={titleRef} defaultValue={recipe.title} maxLength={300} autoFocus /></label>
               <label className="grid gap-2 text-sm font-bold">Description<textarea ref={descriptionRef} className="input min-h-24 resize-y" maxLength={2000} defaultValue={recipe.description ?? ""} /></label>
               <div className="grid grid-cols-3 gap-3">
                 <label className="grid gap-2 text-sm font-bold">Servings<Input ref={servingsRef} inputMode="decimal" defaultValue={recipe.servings} /></label>
@@ -232,7 +232,7 @@ export function RecipeEditor({
                     {tags.map((tag) => (
                       <Badge key={tag}>
                         {tag}
-                        <button type="button" className="-mr-1 grid size-5 place-items-center rounded-full hover:bg-black/10" aria-label={`Remove tag ${tag}`} onClick={() => setTags(tags.filter((existing) => existing !== tag))}><X size={12} /></button>
+                        <button type="button" className="-mr-1 grid size-6 place-items-center rounded-full hover:bg-black/10" aria-label={`Remove tag ${tag}`} onClick={() => setTags(tags.filter((existing) => existing !== tag))}><X size={12} /></button>
                       </Badge>
                     ))}
                   </div>
@@ -274,7 +274,7 @@ export function RecipeEditor({
           <Card>
             <CardContent>
               <h2 className="section-heading">Instructions</h2>
-              <label className="mt-1 grid gap-3 text-sm text-muted-foreground">One step per line.<textarea ref={instructionsRef} className="input min-h-64 resize-y text-foreground" defaultValue={recipe.instructions.map((instruction) => instruction.text).join("\n")} /></label>
+              <label className="mt-1 grid gap-3 text-sm text-muted-foreground"><span><span className="sr-only">Instructions. </span>One step per line.</span><textarea ref={instructionsRef} className="input min-h-64 resize-y text-foreground" defaultValue={recipe.instructions.map((instruction) => instruction.text).join("\n")} /></label>
             </CardContent>
           </Card>
         </div>

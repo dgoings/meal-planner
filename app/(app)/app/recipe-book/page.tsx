@@ -87,7 +87,7 @@ export default function RecipeBookPage() {
         </label>
       </div>
       <div className="mb-4 flex items-center justify-between">
-        <p className="text-sm font-bold">
+        <p className="text-sm font-bold" role="status">
           {recipes === undefined ? "Loading recipes…" : `${recipes.length} ${recipes.length === 1 ? "recipe" : "recipes"}`}
         </p>
         <label className="text-sm text-muted-foreground">
@@ -100,8 +100,7 @@ export default function RecipeBookPage() {
         </label>
       </div>
       {recipes === undefined ? (
-        <div className="recipe-book-grid grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" role="status" aria-live="polite">
-          <span className="sr-only">Loading recipes…</span>
+        <div className="recipe-book-grid grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((item) => <Skeleton className="h-96" key={item} />)}
         </div>
       ) : recipes.length === 0 ? (

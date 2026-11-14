@@ -147,9 +147,9 @@ export function GroceryListEditor({
           </CardContent>
         </Card>
         {groups.map(([category, categoryItems]) => (
-          <section key={category} aria-labelledby={`group-${category}`}>
+          <section key={category} aria-labelledby={`group-${category.replace(/\W+/g, "-")}`}>
             <h2
-              id={`group-${category}`}
+              id={`group-${category.replace(/\W+/g, "-")}`}
               className="mb-2 text-sm font-extrabold uppercase tracking-[.08em] text-muted-foreground"
             >
               {category}
@@ -166,7 +166,7 @@ export function GroceryListEditor({
                       aria-label={`Mark ${item.name} complete`}
                     />
                     <Input
-                      className={`ingredient-name ${item.checked ? "line-through opacity-55" : ""}`}
+                      className={`ingredient-name ${item.checked ? "is-checked" : ""}`}
                       value={item.name}
                       onChange={(event) =>
                         updateItem(item.id, { name: event.target.value })

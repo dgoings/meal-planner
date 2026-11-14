@@ -39,7 +39,6 @@ export default function GroceryListsPage() {
         <Link
           className="h-full min-w-0"
           href={newListHref}
-          aria-label="Start another grocery list"
         >
           <Card className="recipe-card h-64 border-dashed">
             <CardContent className="grid h-full place-items-center text-center">

@@ -86,7 +86,7 @@ export function RecipeImportNotifications() {
 
   return (
     <>
-      <div className="fixed bottom-24 right-4 z-40 grid w-[min(92vw,24rem)] gap-3 md:bottom-6" aria-live="polite" aria-label="Recipe import notifications">
+      <div className="fixed bottom-24 right-4 z-40 grid w-[min(92vw,24rem)] gap-3 md:bottom-6" role="region" aria-live="polite" aria-label="Recipe import notifications">
         {trackedImportGroups.map(({ key, item: recipeImport, ids }) => {
           const failed = recipeImport.status === "failed";
           const completed = recipeImport.status === "completed" || recipeImport.status === "needs_review";

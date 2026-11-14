@@ -56,7 +56,7 @@ export function RecipeCard({
         <button
           type="button"
           className="recipe-selection-button flex h-full w-full cursor-pointer flex-col text-left disabled:cursor-wait disabled:opacity-60"
-          aria-label={`Choose ${recipe.title}`}
+          aria-label={`Choose recipe: ${recipe.title}`}
           disabled={selectionDisabled}
           onClick={() => onSelect(recipe.id)}
         >

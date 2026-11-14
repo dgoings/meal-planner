@@ -87,7 +87,7 @@ export default function LandingPage() {
           </div>
         </div>
 
-        <div className="hero-board" aria-label="A recipe moving from the web into PerfectPlate">
+        <div className="hero-board" role="img" aria-label="A recipe moving from the web into PerfectPlate">
           <div className="hero-note"><Sparkles size={17} />Recipe card ready to review</div>
           <Card className="hero-recipe">
             <FoodArt variant="garden" label="Imported from the web" />

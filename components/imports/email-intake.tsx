@@ -58,10 +58,11 @@ export function EmailIntake() {
             </Alert>
           ) : (
             <div className="mt-6 flex flex-col gap-2 rounded-xl border border-border bg-white p-3 sm:flex-row sm:items-center">
-              <code className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-2 text-sm font-bold">{inbox.email}</code>
+              <code className="min-w-0 flex-1 break-all px-2 text-sm font-bold">{inbox.email}</code>
               <Button variant="secondary" onClick={copyAddress}>
                 {copied ? <Check size={17} /> : <Clipboard size={17} />}{copied ? "Copied" : "Copy address"}
               </Button>
+              <span className="sr-only" role="status">{copied ? "Inbox address copied" : ""}</span>
             </div>
           )}
           {error && <p className="mt-4 text-sm font-bold text-red-700" role="alert">{error}</p>}
@@ -83,7 +84,7 @@ export function EmailIntake() {
               <MailCheck className="shrink-0 text-primary" size={22} />
               <div className="min-w-0 flex-1">
                 <p className="font-extrabold">Email received</p>
-                <p className="mt-1 truncate text-sm text-muted-foreground">{activeEmail.subject ?? "Recipe email"}</p>
+                <p className="mt-1 truncate text-sm">{activeEmail.subject ?? "Recipe email"}</p>
               </div>
               <span className="flex shrink-0 items-center gap-2 text-sm font-bold text-primary">
                 <LoaderCircle className="animate-spin" size={18} /> Creating recipe card…

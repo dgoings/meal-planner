@@ -111,7 +111,7 @@ describe("RecipeBookPage", () => {
     render(<RecipeBookPage />);
 
     expect(screen.getByRole("heading", { name: "Change current recipe" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Choose Zucchini Pasta" }));
+    await user.click(screen.getByRole("button", { name: "Choose recipe: Zucchini Pasta" }));
 
     expect(queryState.createFromRecipe).toHaveBeenCalledWith({ recipeId: "recipe-z" });
     expect(queryState.push).toHaveBeenCalledWith("/app");

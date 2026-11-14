@@ -34,7 +34,7 @@ describe("GroceryListsPage", () => {
       "/app/grocery-lists/new",
     );
     expect(
-      screen.getByRole("link", { name: "Start another grocery list" }),
+      screen.getByRole("link", { name: /^Start another list/ }),
     ).toHaveAttribute("href", "/app/grocery-lists/new");
   });
 
@@ -59,7 +59,7 @@ describe("GroceryListsPage", () => {
     expect(title.closest(".card")).toHaveClass("h-64");
 
     const createCard = screen
-      .getByRole("link", { name: "Start another grocery list" })
+      .getByRole("link", { name: /^Start another list/ })
       .querySelector(".card");
     expect(createCard).toHaveClass("h-64");
   });

@@ -157,7 +157,7 @@ export function PasswordResetForm() {
             <form className="mt-8 grid gap-4" onSubmit={verifyCode}>
               <label className="grid gap-2 text-sm font-bold">
                 Reset code
-                <Input required name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="123456" />
+                <Input required autoFocus name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="123456" />
               </label>
               <label className="grid gap-2 text-sm font-bold">
                 New password

@@ -27,6 +27,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
   const removeCard = useMutation(api.recipeCards.removeCard);
   const addToBook = useMutation(api.recipeCards.addToBook);
   const [editing, setEditing] = useState(false);
+  const [returnFocusToEdit, setReturnFocusToEdit] = useState(false);
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -93,7 +94,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
         <RecipeEditor
           recipe={recipe}
           ingredients={ingredients}
-          onClose={() => setEditing(false)}
+          onClose={() => { setReturnFocusToEdit(true); setEditing(false); }}
           onError={(text) => { setError(text); if (text) setMessage(""); }}
           onMessage={(text) => { setError(""); setMessage(text); }}
         />
@@ -116,7 +117,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
                 <AddRecipeToListButton recipeId={recipe._id} variant="secondary" />
               </div>
               <div className="mt-4 flex flex-wrap items-center gap-1 border-t border-border pt-3">
-                <Button variant="ghost" size="sm" onClick={() => { setMessage(""); setEditing(true); }}><Pencil size={16} />Edit recipe</Button>
+                <Button variant="ghost" size="sm" autoFocus={returnFocusToEdit} onClick={() => { setMessage(""); setEditing(true); }}><Pencil size={16} />Edit recipe</Button>
                 {recipe.sourceUrl && <Button asChild variant="ghost" size="sm"><a href={recipe.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} />View original</a></Button>}
                 <Button variant="ghost" size="sm" className="text-red-700 hover:bg-red-50" onClick={() => void remove()}><Trash2 size={16} />Remove recipe</Button>
               </div>
@@ -130,7 +131,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
         </>
       )}
 
-      <Card className="mt-8"><CardContent><h2 className="section-heading">Personal notes</h2><p className="section-copy">Only you can see these notes.</p><textarea ref={notesRef} className="input mt-4 min-h-32 w-full resize-y" maxLength={10000} defaultValue={data.saved?.notes ?? ""} placeholder="What would you change next time?" /><Button className="mt-3" variant="secondary" onClick={() => void saveNotes()}><Save size={16} />Save notes</Button></CardContent></Card>
+      <Card className="mt-8"><CardContent><h2 className="section-heading">Personal notes</h2><p className="section-copy">Only you can see these notes.</p><textarea ref={notesRef} aria-label="Personal notes" className="input mt-4 min-h-32 w-full resize-y" maxLength={10000} defaultValue={data.saved?.notes ?? ""} placeholder="What would you change next time?" /><Button className="mt-3" variant="secondary" onClick={() => void saveNotes()}><Save size={16} />Save notes</Button></CardContent></Card>
     </div>
   );
 }

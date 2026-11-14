@@ -68,12 +68,12 @@ export function ManualRecipeDialog({
         <DialogDescription>Enter the recipe details below. Ingredients and instructions should each go on their own line.</DialogDescription>
         <form className="mt-6 grid gap-4" onSubmit={submit}>
           <label className="grid gap-2 text-sm font-bold">Recipe title<Input name="title" required maxLength={300} autoFocus /></label>
-          <label className="grid gap-2 text-sm font-bold">Description<textarea className="input min-h-20 resize-y" name="description" maxLength={2000} /></label>
+          <label className="grid gap-2 text-sm font-bold">Description <span className="font-normal text-muted-foreground">(optional)</span><textarea className="input min-h-20 resize-y" name="description" maxLength={2000} /></label>
           <label className="grid gap-2 text-sm font-bold">Source URL <span className="font-normal text-muted-foreground">(optional)</span><Input name="sourceUrl" type="url" defaultValue={initialSourceUrl} /></label>
           <div className="grid gap-4 sm:grid-cols-3">
-            <label className="grid gap-2 text-sm font-bold">Servings<Input name="servings" type="number" min="0" step="any" /></label>
-            <label className="grid gap-2 text-sm font-bold">Prep minutes<Input name="prepTimeMinutes" type="number" min="0" /></label>
-            <label className="grid gap-2 text-sm font-bold">Cook minutes<Input name="cookTimeMinutes" type="number" min="0" /></label>
+            <label className="grid gap-2 text-sm font-bold">Servings <span className="font-normal text-muted-foreground">(optional)</span><Input name="servings" type="number" min="0" step="any" /></label>
+            <label className="grid gap-2 text-sm font-bold">Prep minutes <span className="font-normal text-muted-foreground">(optional)</span><Input name="prepTimeMinutes" type="number" min="0" /></label>
+            <label className="grid gap-2 text-sm font-bold">Cook minutes <span className="font-normal text-muted-foreground">(optional)</span><Input name="cookTimeMinutes" type="number" min="0" /></label>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <label className="grid gap-2 text-sm font-bold">Ingredients<textarea className="input min-h-52 resize-y" name="ingredients" required placeholder={"2 cups flour\n1 tsp salt\n2 eggs"} /></label>
