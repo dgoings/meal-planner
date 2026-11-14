@@ -300,6 +300,29 @@ async function requireOwnedItem(
   return item;
 }
 
+async function requireAccessibleRecipe(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  recipeId: Id<"recipes">,
+) {
+  const recipe = await ctx.db.get(recipeId);
+  if (recipe === null || recipe.deletedAt !== undefined) {
+    throw new Error("Recipe was not found");
+  }
+  if (recipe.isPublic === true) return recipe;
+  const savedRecipe = await ctx.db
+    .query("savedRecipes")
+    .withIndex("by_user_and_recipe", (q) =>
+      q.eq("userId", userId).eq("recipeId", recipeId),
+    )
+    .unique();
+  if (savedRecipe !== null) return recipe;
+  const recipeImport =
+    recipe.importId === undefined ? null : await ctx.db.get(recipe.importId);
+  if (recipeImport?.requestedBy !== userId) throw new Error("Forbidden");
+  return recipe;
+}
+
 export const listMine = query({
   args: {},
   returns: v.array(groceryListValidator),
@@ -451,24 +474,7 @@ export const createFromRecipe = mutation({
   returns: v.id("groceryLists"),
   handler: async (ctx, { recipeId, forceNew }) => {
     const userId = await requireMutationUser(ctx);
-    const recipe = await ctx.db.get(recipeId);
-    if (recipe === null || recipe.deletedAt !== undefined) {
-      throw new Error("Recipe was not found");
-    }
-
-    const savedRecipe = await ctx.db
-      .query("savedRecipes")
-      .withIndex("by_user_and_recipe", (q) =>
-        q.eq("userId", userId).eq("recipeId", recipeId),
-      )
-      .unique();
-    if (recipe.isPublic !== true && savedRecipe === null) {
-      const recipeImport =
-        recipe.importId === undefined ? null : await ctx.db.get(recipe.importId);
-      if (recipeImport?.requestedBy !== userId) {
-        throw new Error("Forbidden");
-      }
-    }
+    const recipe = await requireAccessibleRecipe(ctx, userId, recipeId);
 
     if (!forceNew) {
       const existing = await ctx.db
@@ -552,17 +558,7 @@ export const addRecipeToList = mutation({
     if (list.status !== "active") {
       throw new Error("Recipes can only be added to active grocery lists");
     }
-    const recipe = await ctx.db.get(recipeId);
-    if (recipe === null || recipe.deletedAt !== undefined) {
-      throw new Error("Recipe was not found");
-    }
-    const savedRecipe = await ctx.db
-      .query("savedRecipes")
-      .withIndex("by_user_and_recipe", (q) =>
-        q.eq("userId", userId).eq("recipeId", recipeId),
-      )
-      .unique();
-    if (recipe.isPublic !== true && savedRecipe === null) throw new Error("Forbidden");
+    const recipe = await requireAccessibleRecipe(ctx, userId, recipeId);
 
     const [recipeIngredients, existingItems] = await Promise.all([
       ctx.db.query("recipeIngredients").withIndex("by_recipe_and_position", (q) => q.eq("recipeId", recipeId)).take(200),

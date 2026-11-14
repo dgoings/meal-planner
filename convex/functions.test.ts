@@ -1220,6 +1220,30 @@ describe("grocery list validation branches", () => {
     )?.recipeTitles).toEqual(["pancakes"]);
   });
 
+  it("adds an imported recipe that is not in the Recipe Book to an existing list", async () => {
+    const t = initTest();
+    const ownerId = await createUser(t, "UnsavedImportCook");
+    const otherId = await createUser(t, "OtherListCook");
+    const asOwner = t.withIdentity({ subject: ownerId });
+    const asOther = t.withIdentity({ subject: otherId });
+    const recipeId = await createRecipe(t, "lemon-cookies", { requestedBy: ownerId });
+    await t.run(async (ctx) => {
+      await ctx.db.insert("recipeIngredients", { recipeId, position: 1, originalText: "2 lemons", name: "Lemons", normalizedName: "lemons", quantity: 2, isOptional: false });
+    });
+    const listId = await asOwner.mutation(api.groceryLists.create, { name: "Weekend" });
+    const otherListId = await asOther.mutation(api.groceryLists.create, { name: "Other" });
+
+    await asOwner.mutation(api.groceryLists.addRecipeToList, { recipeId, listId });
+    const result = await asOwner.query(api.groceryLists.get, { listId });
+    expect(result?.list.sourceRecipeIds).toEqual([recipeId]);
+    expect(result?.items).toHaveLength(1);
+    expect(result?.items[0]).toMatchObject({ normalizedName: "lemons", quantity: 2 });
+
+    await expect(
+      asOther.mutation(api.groceryLists.addRecipeToList, { recipeId, listId: otherListId }),
+    ).rejects.toThrow(/Forbidden/);
+  });
+
   it("creates a renamed idempotent merged list and removes both originals", async () => {
     const t = initTest();
     const ownerId = await createUser(t, "ListCombiner");
