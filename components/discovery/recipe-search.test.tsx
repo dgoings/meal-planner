@@ -26,6 +26,8 @@ const stew = {
   title: "Smoky Lentil Stew",
   description: "A weeknight stew.",
   source: "example.com",
+  rating: 4.7,
+  ratingCount: 2150,
 };
 
 async function searchFor(user: ReturnType<typeof userEvent.setup>, text: string) {
@@ -51,6 +53,8 @@ describe("RecipeSearch", () => {
     const results = await screen.findByRole("list", { name: "Recipes for lentil stew" });
     expect(within(results).getByRole("heading", { name: "Smoky Lentil Stew" })).toBeInTheDocument();
     expect(within(results).getByText("example.com")).toBeInTheDocument();
+    expect(within(results).getByText("4.7")).toBeInTheDocument();
+    expect(within(results).getByText("(2,150 ratings)")).toBeInTheDocument();
     expect(within(results).getByRole("link", { name: "View original" })).toHaveAttribute("href", stew.url);
 
     await user.click(within(results).getByRole("button", { name: "Import recipe" }));
