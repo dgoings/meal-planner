@@ -195,7 +195,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
     <div className="page-container">
       <Button asChild variant="ghost" className="mb-5"><Link href="/app/recipe-book"><ArrowLeft size={17} />Back to Recipe Book</Link></Button>
       {importReview?.status === "needs_review" && (
-        <Card className="mb-6 border-amber-300 bg-amber-50"><CardContent><p className="font-extrabold text-amber-950">This AI-generated recipe needs your review</p><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-900">{importReview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul><Button className="mt-4" size="sm" onClick={() => void finishReview()}><Check size={16} />Mark review complete</Button></CardContent></Card>
+        <Card className="mb-6 border-amber-300 bg-amber-50"><CardContent><p className="font-extrabold text-amber-950">This generated recipe card needs your review</p><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-900">{importReview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul><Button className="mt-4" size="sm" onClick={() => void finishReview()}><Check size={16} />Mark review complete</Button></CardContent></Card>
       )}
       {(error || message) && <p className={`mb-4 rounded-lg p-3 text-sm font-semibold ${error ? "bg-red-50 text-red-700" : "bg-primary-soft text-primary"}`} role={error ? "alert" : "status"}>{error || message}</p>}
 
