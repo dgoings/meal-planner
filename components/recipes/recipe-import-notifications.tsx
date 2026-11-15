@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { BookOpen, CheckCircle2, LoaderCircle, PencilLine, TriangleAlert, X } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import { BookOpen, CheckCircle2, LoaderCircle, PencilLine, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
@@ -15,6 +15,17 @@ type ImportStartedEvent = CustomEvent<{ importId: string }>;
 
 export function RecipeImportNotifications() {
   const imports = useQuery(api.email.recentImports);
+  const retryImport = useMutation(api.recipeIngestion.retryImport);
+  const [retryFailedId, setRetryFailedId] = useState<string | null>(null);
+
+  async function retry(importId: Id<"recipeImports">) {
+    setRetryFailedId(null);
+    try {
+      await retryImport({ importId });
+    } catch {
+      setRetryFailedId(importId);
+    }
+  }
   const [trackedIds, setTrackedIds] = useState<string[]>([]);
   const [previewRecipeId, setPreviewRecipeId] = useState<Id<"recipes"> | null>(null);
   const [manualImportId, setManualImportId] = useState<string | null>(null);
@@ -97,7 +108,8 @@ export function RecipeImportNotifications() {
                 <div className="min-w-0 flex-1">
                   <p className="font-extrabold">{failed ? "Recipe import failed" : completed ? "Your recipe is ready" : "Creating your recipe card"}</p>
                   <p className="mt-1 text-sm leading-5 text-muted-foreground">{failed ? recipeImportFailureMessage(recipeImport.errorMessage) : completed ? "Review the recipe card, then save it when it looks right." : "We’re processing the source. You can keep using PerfectPlate while it finishes."}</p>
-                  {failed && <Button className="mt-3" size="sm" onClick={() => setManualImportId(recipeImport._id)}><PencilLine size={16} />Add manually</Button>}
+                  {failed && <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" onClick={() => void retry(recipeImport._id)}><RotateCcw size={16} />Try again</Button><Button size="sm" variant="secondary" onClick={() => setManualImportId(recipeImport._id)}><PencilLine size={16} />Add manually</Button></div>}
+                  {failed && retryFailedId === recipeImport._id && <p className="mt-2 text-xs font-bold text-red-700">This link can’t be retried again. Add the recipe manually instead.</p>}
                   {completed && recipeImport.recipeId && <Button className="mt-3" size="sm" onClick={() => { setPreviewRecipeId(recipeImport.recipeId!); setTrackedIds((current) => current.filter((id) => !ids.includes(id as Id<"recipeImports">))); }}><BookOpen size={16} />View recipe</Button>}
                 </div>
                 <button className="grid size-7 shrink-0 place-items-center rounded-md hover:bg-surface-subtle" onClick={() => setTrackedIds((current) => current.filter((id) => !ids.includes(id as Id<"recipeImports">)))} aria-label="Dismiss recipe notification"><X size={16} /></button>

@@ -8,6 +8,8 @@ import {
   extractRecipeJsonLd,
   extractRecipeRating,
 } from "./lib/recipeScrape";
+import { readBodyWithLimit } from "./lib/boundedFetch";
+import { assertPublicResolution } from "./lib/publicDns";
 import { isPublicUrlHostname } from "./lib/urls";
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -72,11 +74,18 @@ function htmlToMarkdown(html: string) {
 
 async function fetchHtml(url: URL, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
+  // The timer stays armed until the body is fully read; a server that sends
+  // headers promptly and then stalls must not hold the action open.
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let currentUrl = url;
   let response: Response;
   try {
     for (let redirect = 0; ; redirect += 1) {
+      try {
+        await assertPublicResolution(currentUrl.hostname);
+      } catch {
+        throw new Error("Recipe page host is not public");
+      }
       try {
         // Redirects are followed by hand so every hop is checked against the
         // same public-host rules as the original URL.
@@ -97,25 +106,31 @@ async function fetchHtml(url: URL, timeoutMs = FETCH_TIMEOUT_MS) {
       }
       currentUrl = safeRecipeUrl(new URL(location, currentUrl).toString());
     }
+
+    const contentType = response.headers
+      .get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim();
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await readBodyWithLimit(response, MAX_RESPONSE_BYTES);
+    } catch {
+      throw new Error(
+        `recipe_scrape_failed: could not read ${currentUrl.hostname}`,
+      );
+    }
+    if (bytes === null) {
+      throw new Error("recipe_scrape_failed: response was too large");
+    }
+    return {
+      html: new TextDecoder("utf-8").decode(bytes),
+      statusCode: response.status,
+      contentType,
+      finalUrl: currentUrl.toString(),
+    };
   } finally {
     clearTimeout(timeout);
   }
-
-  const contentType = response.headers
-    .get("content-type")
-    ?.split(";", 1)[0]
-    ?.trim();
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > MAX_RESPONSE_BYTES) {
-    throw new Error("recipe_scrape_failed: response was too large");
-  }
-  const html = new TextDecoder("utf-8").decode(buffer);
-  return {
-    html,
-    statusCode: response.status,
-    contentType,
-    finalUrl: currentUrl.toString(),
-  };
 }
 
 export const scrapePage = internalAction({

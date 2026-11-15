@@ -7,6 +7,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
+import { groceryCategory } from "./lib/groceryCategory";
 import { parseManualIngredient } from "./lib/manualIngredient";
 
 const groceryListStatus = v.union(
@@ -215,6 +216,32 @@ function strictNumericQuantity(item: {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function validatedServingsMultiplier(value: number | undefined) {
+  if (value === undefined) return 1;
+  if (!Number.isFinite(value) || value < 0.01 || value > 100) {
+    throw new Error("Servings multiplier must be between 0.01 and 100");
+  }
+  return value;
+}
+
+function scaledIngredient<
+  T extends { quantity?: number; quantityText?: string },
+>(ingredient: T, multiplier: number): T {
+  if (multiplier === 1) return ingredient;
+  const amount = strictNumericQuantity(ingredient);
+  if (amount === undefined) return ingredient;
+  const quantity = validQuantity(amount * multiplier);
+  return { ...ingredient, quantity, quantityText: formattedQuantity(quantity) };
+}
+
+async function catalogCategory(
+  ctx: QueryCtx | MutationCtx,
+  ingredientId: Id<"ingredients"> | undefined,
+) {
+  if (ingredientId === undefined) return undefined;
+  return groceryCategory((await ctx.db.get(ingredientId))?.category);
+}
+
 function displayedQuantity(item: { quantity?: number; quantityText?: string }) {
   return item.quantityText?.trim() || item.quantity?.toString();
 }
@@ -401,7 +428,14 @@ export const get = query({
     const sourcedItemIds = new Set(
       itemSources.filter((source) => source.recipeTitles.length > 0).map((source) => source.itemId),
     );
-    const visibleItems = items.map((item) => {
+    const categorizedItems = await Promise.all(
+      items.map(async (item) => ({
+        ...item,
+        category:
+          item.category ?? (await catalogCategory(ctx, item.ingredientId)),
+      })),
+    );
+    const visibleItems = categorizedItems.map((item) => {
       if (!sourcedItemIds.has(item._id) || item.quantity !== undefined || item.quantityText || item.unit) {
         return groceryItemForDisplay(item);
       }
@@ -470,11 +504,16 @@ export const create = mutation({
 });
 
 export const createFromRecipe = mutation({
-  args: { recipeId: v.id("recipes"), forceNew: v.optional(v.boolean()) },
+  args: {
+    recipeId: v.id("recipes"),
+    forceNew: v.optional(v.boolean()),
+    servingsMultiplier: v.optional(v.number()),
+  },
   returns: v.id("groceryLists"),
-  handler: async (ctx, { recipeId, forceNew }) => {
+  handler: async (ctx, { recipeId, forceNew, servingsMultiplier }) => {
     const userId = await requireMutationUser(ctx);
     const recipe = await requireAccessibleRecipe(ctx, userId, recipeId);
+    const multiplier = validatedServingsMultiplier(servingsMultiplier);
 
     if (!forceNew) {
       const existing = await ctx.db
@@ -492,7 +531,8 @@ export const createFromRecipe = mutation({
       .take(200);
     const requiredIngredients = recipeIngredients
       .filter((ingredient) => !ingredient.isOptional)
-      .map(groceryIngredient);
+      .map(groceryIngredient)
+      .map((ingredient) => scaledIngredient(ingredient, multiplier));
     const now = Date.now();
     const listId = await ctx.db.insert("groceryLists", {
       userId,
@@ -515,7 +555,7 @@ export const createFromRecipe = mutation({
         quantity: ingredient.quantity,
         quantityText: ingredient.quantityText,
         unit: ingredient.unit,
-        category: undefined,
+        category: await catalogCategory(ctx, ingredient.ingredientId),
         notes: ingredient.notes,
         isChecked: false,
         sortOrder: index + 1,
@@ -526,7 +566,7 @@ export const createFromRecipe = mutation({
         groceryListItemId: itemId,
         recipeId,
         recipeIngredientId: ingredient._id,
-        servingsMultiplier: 1,
+        servingsMultiplier: multiplier,
         quantityAdded: ingredient.quantity,
         quantityTextAdded: ingredient.quantityText,
         createdAt: now,
@@ -550,15 +590,17 @@ export const addRecipeToList = mutation({
   args: {
     recipeId: v.id("recipes"),
     listId: v.id("groceryLists"),
+    servingsMultiplier: v.optional(v.number()),
   },
   returns: v.id("groceryLists"),
-  handler: async (ctx, { recipeId, listId }) => {
+  handler: async (ctx, { recipeId, listId, servingsMultiplier }) => {
+    const multiplier = validatedServingsMultiplier(servingsMultiplier);
     const userId = await requireMutationUser(ctx);
     const list = await requireOwnedList(ctx, userId, listId);
     if (list.status !== "active") {
       throw new Error("Recipes can only be added to active grocery lists");
     }
-    const recipe = await requireAccessibleRecipe(ctx, userId, recipeId);
+    await requireAccessibleRecipe(ctx, userId, recipeId);
 
     const [recipeIngredients, existingItems] = await Promise.all([
       ctx.db.query("recipeIngredients").withIndex("by_recipe_and_position", (q) => q.eq("recipeId", recipeId)).take(200),
@@ -570,7 +612,8 @@ export const addRecipeToList = mutation({
     );
     const requiredIngredients = recipeIngredients
       .filter((item) => !item.isOptional)
-      .map(groceryIngredient);
+      .map(groceryIngredient)
+      .map((ingredient) => scaledIngredient(ingredient, multiplier));
     const missingKeys = new Set(
       requiredIngredients
         .map(ingredientMatchKey)
@@ -592,6 +635,7 @@ export const addRecipeToList = mutation({
           quantity: ingredient.quantity,
           quantityText: ingredient.quantityText,
           unit: ingredient.unit,
+          category: await catalogCategory(ctx, ingredient.ingredientId),
           notes: ingredient.notes,
           isChecked: false,
           sortOrder: nextSortOrder++,
@@ -602,7 +646,7 @@ export const addRecipeToList = mutation({
           groceryListItemId: itemId,
           recipeId,
           recipeIngredientId: ingredient._id,
-          servingsMultiplier: 1,
+          servingsMultiplier: multiplier,
           quantityAdded: ingredient.quantity,
           quantityTextAdded: ingredient.quantityText,
           createdAt: now,
@@ -632,7 +676,7 @@ export const addRecipeToList = mutation({
         groceryListItemId: existing._id,
         recipeId,
         recipeIngredientId: ingredient._id,
-        servingsMultiplier: 1,
+        servingsMultiplier: multiplier,
         quantityAdded: ingredient.quantity,
         quantityTextAdded: ingredient.quantityText,
         createdAt: now,
@@ -654,6 +698,7 @@ export const save = mutation({
     requestId: v.string(),
     name: v.string(),
     items: v.array(saveItem),
+    removedItemIds: v.optional(v.array(v.id("groceryListItems"))),
   },
   returns: v.id("groceryLists"),
   handler: async (ctx, args) => {
@@ -758,8 +803,13 @@ export const save = mutation({
       }
     }
 
+    // Items the client never loaded (added from another device or tab while
+    // this editor was open) are kept; only explicit removals are deleted.
+    const removedIds =
+      args.removedItemIds === undefined ? null : new Set(args.removedItemIds);
     for (const existingItem of existingItems) {
       if (retainedIds.has(existingItem._id)) continue;
+      if (removedIds !== null && !removedIds.has(existingItem._id)) continue;
       const sources = await ctx.db
         .query("groceryListItemSources")
         .withIndex("by_grocery_list_item", (q) =>

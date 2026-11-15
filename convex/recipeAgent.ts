@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import { z } from "zod";
 import { components, internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
+import { GROCERY_CATEGORIES } from "./lib/groceryCategory";
 import {
   recipeExtractionValidator,
   type RecipeExtraction,
@@ -64,7 +65,7 @@ const recipeExtractionSchema = z.object({
         unit: z.string().trim().max(100).nullable(),
         preparation: z.string().trim().max(300).nullable(),
         notes: z.string().trim().max(500).nullable(),
-        category: z.string().trim().max(100).nullable(),
+        category: z.enum(GROCERY_CATEGORIES).nullable(),
         isOptional: z.boolean(),
       }),
     )
@@ -104,6 +105,7 @@ Extraction rules:
 - Preserve ingredient wording in originalText, while splitting name, quantity, unit, preparation, and notes when supported.
 - Use a decimal quantity only when it is exactly convertible; keep display fractions or ranges in quantityText.
 - Mark ingredients optional only when the source explicitly does so.
+- Set each ingredient's category to the grocery store section where it is normally shelved.
 - Put uncertainty, missing core fields, contradictions, or apparent truncation in warnings.
 - Normalize positions to a clear cooking order.
 - Return an empty metadata array rather than guessing cuisines, categories, or keywords.`,

@@ -8,6 +8,7 @@ export type Recipe = {
   tags: string[];
   art: "garden" | "citrus" | "tomato" | "berry";
   imageUrl?: string;
+  isFavorite?: boolean;
   matchReason?: string;
   missingIngredients?: string[];
 };

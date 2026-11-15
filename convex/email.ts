@@ -216,7 +216,11 @@ export const onMessageReceived = internalMutation({
       .query("users")
       .withIndex("email", (q) => q.eq("email", fromAddress))
       .unique();
-    if (user === null) return { queued: 0 };
+    // An unverified address proves nothing about who owns the mailbox, so its
+    // forwards are not attributed to the account that claimed it.
+    if (user === null || user.emailVerificationTime === undefined) {
+      return { queued: 0 };
+    }
 
     const alreadyHandled = await ctx.db
       .query("inboundRecipeEmails")

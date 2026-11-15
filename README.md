@@ -82,7 +82,10 @@ The frontend currently includes the following responsive, navigable flows:
 
 - **Marketing and authentication:** landing page plus working password-based
   sign-in, sign-up, and emailed password-recovery screens backed by Convex Auth.
-  Application routes require an authenticated session.
+  New accounts confirm their email address with a six-digit code before a
+  session starts; an existing account that has not confirmed yet is asked for
+  a code at its next sign-in. Application routes require an authenticated
+  session.
 - **Application shell:** responsive desktop sidebar and five-item mobile bottom
   navigation. Recipe Inbox lives with the primary destinations; Log out and
   Settings are grouped at the bottom of the desktop sidebar.
@@ -90,11 +93,16 @@ The frontend currently includes the following responsive, navigable flows:
   lists, recent recipes, and a current recipe that can be viewed, changed, or
   cleared.
 - **Recipe Book:** Convex-backed, searchable and sortable recipe gallery with
-  a three-column desktop layout, detailed recipe pages, and a selection mode for
-  changing the current recipe.
-- **Recipe details:** ingredients, cooking instructions, working serving
-  controls, source attribution, equally sized save/current/grocery/source
-  actions, and duplicate-grocery-list confirmation.
+  favorites, a tag filter, a three-column desktop layout, detailed recipe
+  pages, and a selection mode for changing the current recipe. The book lists
+  the 500 most recently saved recipes and says so when that limit is reached.
+- **Recipe details:** ingredients, cooking instructions, serving controls that
+  show kitchen fractions and carry the chosen serving count into a grocery
+  list, source attribution, favorites, save/current/grocery/source actions,
+  and duplicate-grocery-list confirmation. Personal notes and favorites are
+  available once a recipe is in the Recipe Book. Editing and removal are
+  offered only to the account that imported or created the recipe; anyone else
+  can remove it from their own book.
 - **Recipe importing:** authenticated users can search the web for recipes or
   paste recipe links on Discover, or forward recipe emails to one configured AgentMail inbox. The Recipe Inbox
   shows received and processing states, successful recipe previews, and clear
@@ -102,14 +110,19 @@ The frontend currently includes the following responsive, navigable flows:
   notifications are deduplicated, and the same URL validation and failure rules
   apply to both direct and email imports. The app scrapes the page before the
   Anthropic recipe agent creates a structured preview; the recipe enters the
-  Recipe Book only when the user explicitly saves it.
+  Recipe Book only when the user explicitly saves it. A failed import offers
+  **Try again**. Resubmitting a link retries it automatically unless the agent
+  already read the page and found no complete recipe; each link is limited to
+  five attempts.
 - **Grocery lists:** list overview plus an interactive editor that can add,
   rename, check off, remove, restore, and change the quantity or unit of grocery
   items. Users can create recipe-named lists from saved recipe ingredients,
   merge two lists into a user-named replacement, delete a list, and save new or
-  existing lists atomically to Convex.
-- **Settings:** frontend controls for profile details and notification
-  preferences.
+  existing lists atomically to Convex. Checking an item off a saved list is
+  stored immediately. Changes made to the same list elsewhere appear in an
+  open editor, and saving removes only the items that were removed in that
+  editor. Items from recipes are grouped by store section.
+- **Settings:** profile details and account deletion.
 - **Design-system states:** responsive layouts, accessible focus behavior,
   loading skeletons, status badges, alerts, dialogs, empty-state scaffolding,
   and a custom not-found page.
@@ -136,7 +149,9 @@ workflow that fetches the page itself (`convex/recipeWebScrape.ts`), extracts
 its schema.org Recipe JSON-LD and a markdown-ish rendering of the page text,
 and stores that as bounded source evidence before agent processing. There is
 no external scraping API or API key to configure for this step; it uses the
-Convex deployment's own outbound `fetch` and the `cheerio` HTML parser.
+Convex deployment's own outbound `fetch` and the `cheerio` HTML parser. Page
+and image downloads resolve each hostname and refuse private or loopback
+addresses, and enforce their time and size limits while the body is read.
 
 ### Recipe search
 
@@ -220,9 +235,13 @@ npx convex env set AGENTMAIL_INBOX_ID --deployment <deployment-name>
 ```
 
 PerfectPlate uses this single configured inbox for forwarded recipes and for
-sending password-reset codes. It never creates AgentMail inboxes automatically.
+sending email-confirmation and password-reset codes, so sign-up depends on it
+being configured. It never creates AgentMail inboxes automatically.
 Users should forward recipes from the email address they use to sign in so the
 inbound webhook can privately associate each message with the correct account.
+Forwards are attributed only to accounts whose email address is confirmed. The
+match still relies on the message's From address, which AgentMail does not
+authenticate for the application.
 After changing either value, run
 `npx convex dev --once` so the development backend is refreshed before testing
 email delivery.
@@ -260,6 +279,18 @@ alongside the Anthropic and AgentMail values described above:
 ```sh
 npx convex env set SITE_URL https://perfectplate.vercel.app --prod
 ```
+
+Email confirmation became a sign-up requirement after the first accounts were
+created. Run this once, immediately after the first deployment that includes
+it, so those earlier accounts are treated as confirmed:
+
+```sh
+npx convex run migrations:grandfatherEmailVerification --prod
+```
+
+It is safe to run again. To run it later without confirming accounts created
+in the meantime, pass the deployment time in milliseconds, for example
+`'{"createdBefore": 1794700800000}'`.
 
 Register the production webhook, `https://<production-deployment>.convex.site/agentmail/webhook`,
 in the AgentMail console. API keys and webhook secrets stay on the Convex

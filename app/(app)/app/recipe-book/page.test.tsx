@@ -73,6 +73,24 @@ describe("RecipeBookPage", () => {
     queryState.search = "";
   });
 
+  it("filters by favorites and tag", async () => {
+    const user = userEvent.setup();
+    queryState.value = [{ ...recipes[0], isFavorite: true }, { ...recipes[1], isFavorite: false }];
+    render(<RecipeBookPage />);
+
+    await user.click(screen.getByRole("button", { name: "Favorites" }));
+    expect(screen.getByText("1 recipe")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Zucchini Pasta" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Remove Zucchini Pasta from favorites" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("button", { name: "Favorites" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by tag" }), "Breakfast");
+    expect(screen.getByText("1 recipe")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Apple Oats" })).toBeInTheDocument();
+  });
+
   it("renders loading and empty states", () => {
     queryState.value = undefined;
     const { rerender } = render(<RecipeBookPage />);
@@ -97,7 +115,7 @@ describe("RecipeBookPage", () => {
     expect(screen.getByRole("heading", { name: "Apple Oats" })).toBeInTheDocument();
 
     await user.clear(screen.getByPlaceholderText("Search your Recipe Book"));
-    await user.selectOptions(screen.getByRole("combobox"), "az");
+    await user.selectOptions(screen.getByRole("combobox", { name: /Sort/ }), "az");
     const headings = screen.getAllByRole("heading", { level: 3 });
     expect(headings.map((heading) => heading.textContent)).toEqual([
       "Apple Oats",

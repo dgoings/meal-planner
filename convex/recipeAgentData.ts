@@ -202,6 +202,12 @@ export const persistGeneratedRecipe = internalMutation({
       if (catalogIngredient === null) {
         throw new Error("Ingredient catalog write failed");
       }
+      if (catalogIngredient.category === undefined && ingredient.category !== null) {
+        await ctx.db.patch(catalogIngredient._id, {
+          category: ingredient.category,
+          updatedAt: now,
+        });
+      }
 
       await ctx.db.insert("recipeIngredients", {
         recipeId,

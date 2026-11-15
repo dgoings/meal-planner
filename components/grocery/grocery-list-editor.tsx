@@ -3,42 +3,73 @@
 import { useMutation } from "convex/react";
 import { Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { groceryItems as defaultItems } from "@/lib/data/mock-data";
+import { groceryCategoryOrder } from "@/convex/lib/groceryCategory";
 import type { GroceryItem } from "@/lib/data/types";
 
 export function GroceryListEditor({
-  initialItems = defaultItems,
+  initialItems,
   initialName = "Untitled grocery list",
   listId,
   needsInitialSave = listId === undefined,
   canSave = true,
+  initialSaveState = "idle",
+  onSaved,
 }: {
-  initialItems?: GroceryItem[];
+  initialItems: GroceryItem[];
   initialName?: string;
   listId?: string;
   needsInitialSave?: boolean;
   canSave?: boolean;
+  initialSaveState?: "idle" | "saved";
+  onSaved?: () => void;
 }) {
   const saveList = useMutation(api.groceryLists.save);
+  const updateSavedItem = useMutation(api.groceryLists.updateItem);
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
+  const [serverItems, setServerItems] = useState(initialItems);
+  const [dirty, setDirty] = useState(false);
+  const [checkError, setCheckError] = useState(false);
   const [listName, setListName] = useState(initialName);
   const [name, setName] = useState("");
   const [removed, setRemoved] = useState<GroceryItem | null>(null);
   const [saveState, setSaveState] = useState<
     "idle" | "saving" | "saved" | "error"
-  >("idle");
+  >(initialSaveState);
   const [requestId] = useState(() => crypto.randomUUID());
-  const persistedItemIds = useRef(
-    new Set(listId === undefined ? [] : initialItems.map((item) => item.id)),
+  const persistedItemIds = useMemo(
+    () => new Set(listId === undefined ? [] : serverItems.map((item) => item.id)),
+    [listId, serverItems],
   );
+
+  // The saved list can change while this editor is open (a recipe added from
+  // another tab, an item checked off on a phone). Fold those changes into the
+  // local draft instead of letting the next save overwrite them.
+  if (listId !== undefined && serverItems !== initialItems) {
+    const previousById = new Map(serverItems.map((item) => [item.id, item]));
+    const nextById = new Map(initialItems.map((item) => [item.id, item]));
+    setServerItems(initialItems);
+    setItems((current) => [
+      ...current
+        .filter((item) => !previousById.has(item.id) || nextById.has(item.id))
+        .map((item) => {
+          const previous = previousById.get(item.id);
+          const next = nextById.get(item.id);
+          return previous && next && previous.checked !== next.checked
+            ? { ...item, checked: next.checked }
+            : item;
+        }),
+      ...initialItems.filter((item) => !previousById.has(item.id)),
+    ]);
+  }
+
   const groups = useMemo(
     () =>
       Object.entries(
@@ -46,12 +77,55 @@ export function GroceryListEditor({
           (grouped[item.category] ??= []).push(item);
           return grouped;
         }, {}),
+      ).sort(
+        ([first], [second]) =>
+          groceryCategoryOrder(first) - groceryCategoryOrder(second),
       ),
     [items],
   );
 
+  useEffect(() => {
+    if (!dirty) return;
+    function warnBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+    }
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [dirty]);
+
   function markChanged() {
+    setDirty(true);
     if (saveState !== "idle") setSaveState("idle");
+  }
+
+  async function toggleChecked(item: GroceryItem, checked: boolean) {
+    if (!persistedItemIds.has(item.id)) {
+      updateItem(item.id, { checked });
+      return;
+    }
+    // Check-offs happen in the store aisle, so they are saved immediately
+    // rather than waiting for the next explicit list save.
+    setCheckError(false);
+    setItems((current) =>
+      current.map((candidate) =>
+        candidate.id === item.id ? { ...candidate, checked } : candidate,
+      ),
+    );
+    try {
+      await updateSavedItem({
+        itemId: item.id as Id<"groceryListItems">,
+        isChecked: checked,
+      });
+    } catch {
+      setCheckError(true);
+      setItems((current) =>
+        current.map((candidate) =>
+          candidate.id === item.id
+            ? { ...candidate, checked: !checked }
+            : candidate,
+        ),
+      );
+    }
   }
 
   function updateItem(id: string, patch: Partial<GroceryItem>) {
@@ -94,8 +168,11 @@ export function GroceryListEditor({
         listId: listId as Id<"groceryLists"> | undefined,
         requestId,
         name: listName,
+        removedItemIds: [...persistedItemIds].filter(
+          (id) => !items.some((item) => item.id === id),
+        ) as Id<"groceryListItems">[],
         items: items.map((item, index) => ({
-          itemId: persistedItemIds.current.has(item.id)
+          itemId: persistedItemIds.has(item.id)
             ? (item.id as Id<"groceryListItems">)
             : undefined,
           name: item.name,
@@ -107,8 +184,10 @@ export function GroceryListEditor({
           sortOrder: index + 1,
         })),
       });
+      setDirty(false);
       setSaveState("saved");
       if (listId === undefined) router.replace(`/app/grocery-lists/${savedListId}`);
+      else onSaved?.();
     } catch {
       setSaveState("error");
     }
@@ -161,7 +240,7 @@ export function GroceryListEditor({
                     <Checkbox
                       checked={item.checked}
                       onCheckedChange={(checked) =>
-                        updateItem(item.id, { checked: checked === true })
+                        void toggleChecked(item, checked === true)
                       }
                       aria-label={`Mark ${item.name} complete`}
                     />
@@ -241,6 +320,16 @@ export function GroceryListEditor({
             {saveState === "saved" && (
               <p className="mt-3 text-sm font-bold text-primary" role="status">
                 List saved.
+              </p>
+            )}
+            {dirty && saveState === "idle" && (
+              <p className="mt-3 text-sm text-muted-foreground" role="status">
+                You have unsaved changes.
+              </p>
+            )}
+            {checkError && (
+              <p className="mt-3 text-sm font-bold text-red-700" role="alert">
+                Couldn&apos;t save that check mark. Try again.
               </p>
             )}
             {saveState === "error" && (
