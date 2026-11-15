@@ -1,7 +1,7 @@
 import { isLikelyIndividualRecipePage, normalizeRecipeUrl } from "./urls";
 
 export const MAX_SEARCH_QUERY_LENGTH = 200;
-export const MAX_SEARCH_RESULTS = 6;
+export const MAX_SEARCH_RESULTS = 4;
 export const MAX_SEARCH_CANDIDATES = 12;
 
 // A rating backed by few votes is pulled toward this prior, so 4.6 from 2,000

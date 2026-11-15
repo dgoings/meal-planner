@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import { action, internalMutation, internalQuery } from "./_generated/server";
 import {
   MAX_SEARCH_QUERY_LENGTH,
+  MAX_SEARCH_RESULTS,
   normalizeSearchQuery,
   rankByRating,
   selectRecipeResults,
@@ -46,7 +47,7 @@ export const cached = internalQuery({
     if (entry === null || entry.createdAt < Date.now() - CACHE_TTL_MS) {
       return null;
     }
-    return entry.results;
+    return entry.results.slice(0, MAX_SEARCH_RESULTS);
   },
 });
 

@@ -137,7 +137,7 @@ describe("recipe search", () => {
     ).resolves.toBe(1);
   });
 
-  it("limits results to six", async () => {
+  it("limits results to four", async () => {
     stubWeb(() =>
       tavilyResponse(
         Array.from({ length: 10 }, (_, index) => ({
@@ -150,19 +150,15 @@ describe("recipe search", () => {
     const { asUser } = await signedIn();
     await expect(
       asUser.action(api.recipeSearch.search, { query: "stew" }),
-    ).resolves.toHaveLength(6);
+    ).resolves.toHaveLength(4);
   });
 
-  it("puts the best-rated recipes first and unreachable pages last", async () => {
+  it("puts the best-rated recipes first", async () => {
     const pages: Record<string, () => Response> = {
       unrated: () => recipePage(),
       "few-votes": () => recipePage({ value: 5, count: 3 }),
-      blocked: () => new Response("Forbidden", { status: 403 }),
       popular: () => recipePage({ value: "4.7", count: "2,150" }),
       percent: () => recipePage({ value: 90, count: 400, best: 100 }),
-      offline: () => {
-        throw new Error("offline");
-      },
       "no-count": () => recipePage({ value: 4.9 }),
     };
     stubWeb(
@@ -185,14 +181,46 @@ describe("recipe search", () => {
       "percent",
       "few-votes",
       "no-count",
-      "unrated",
-      "blocked",
     ]);
     expect(results[0]).toMatchObject({ rating: 4.7, ratingCount: 2150 });
     expect(results[1]).toMatchObject({ rating: 4.5, ratingCount: 400 });
     expect(results[3]).toMatchObject({ rating: 4.9 });
     expect(results[3]).not.toHaveProperty("ratingCount");
-    expect(results[4]).not.toHaveProperty("rating");
+  });
+
+  it("puts unrated recipes after rated ones and drops unreachable pages first", async () => {
+    const pages: Record<string, () => Response> = {
+      blocked: () => new Response("Forbidden", { status: 403 }),
+      "unrated-a": () => recipePage(),
+      offline: () => {
+        throw new Error("offline");
+      },
+      "unrated-b": () => recipePage(),
+      popular: () => recipePage({ value: "4.7", count: "2,150" }),
+      "unrated-c": () => recipePage(),
+    };
+    stubWeb(
+      () =>
+        tavilyResponse(
+          Object.keys(pages).map((slug) => ({
+            title: slug,
+            url: `https://example.com/recipes/${slug}`,
+            content: "",
+          })),
+        ),
+      (url) => pages[url.split("/").pop()!](),
+    );
+    const { asUser } = await signedIn();
+
+    const results = await asUser.action(api.recipeSearch.search, { query: "stew" });
+
+    expect(results.map((result) => result.title)).toEqual([
+      "popular",
+      "unrated-a",
+      "unrated-b",
+      "unrated-c",
+    ]);
+    expect(results[1]).not.toHaveProperty("rating");
   });
 
   it("requires a signed-in user and a usable query", async () => {
