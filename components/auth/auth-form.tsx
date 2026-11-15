@@ -46,6 +46,17 @@ export function getAuthErrorMessage(
     };
   }
 
+  if (
+    normalizedMessage.includes("invalid code") ||
+    normalizedMessage.includes("invalid verification") ||
+    normalizedMessage.includes("could not verify code")
+  ) {
+    return {
+      title: "Code not accepted",
+      description: "That code is incorrect or has expired. Check the email and try again.",
+    };
+  }
+
   if (normalizedMessage.includes("already exists")) {
     return {
       title: "Account already exists",
@@ -93,6 +104,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
   const searchParams = useSearchParams();
   const [error, setError] = useState<AuthErrorMessage | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState<string | null>(null);
   const isSignUp = mode === "sign-up";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -101,12 +113,42 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
     setIsSubmitting(true);
 
     const formData = new FormData(event.currentTarget);
+    const email = String(formData.get("email") ?? "").trim().toLowerCase();
+    formData.set("email", email);
     formData.set("flow", isSignUp ? "signUp" : "signIn");
 
     try {
       const result = await signIn("password", formData);
       if (!result.signingIn) {
-        throw new Error("Sign-in could not be completed. Please try again.");
+        // The account exists but its email address has not been confirmed; a
+        // code was sent instead of starting a session.
+        setVerificationEmail(email);
+        setIsSubmitting(false);
+        return;
+      }
+
+      router.replace(safeAppRedirect(searchParams.get("next")));
+      router.refresh();
+    } catch (caughtError) {
+      setError(getAuthErrorMessage(caughtError, mode));
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleVerification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (verificationEmail === null) return;
+    setError(null);
+    setIsSubmitting(true);
+
+    const formData = new FormData(event.currentTarget);
+    formData.set("email", verificationEmail);
+    formData.set("flow", "email-verification");
+
+    try {
+      const result = await signIn("password", formData);
+      if (!result.signingIn) {
+        throw new Error("Invalid code");
       }
 
       router.replace(safeAppRedirect(searchParams.get("next")));
@@ -142,10 +184,12 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
           <div className="mb-10 lg:hidden"><Brand /></div>
           <p className="eyebrow">Welcome {isSignUp ? "to PerfectPlate" : "back"}</p>
           <h1 className="font-display text-4xl font-semibold">
-            {isSignUp ? "Create your account" : "Sign in to your kitchen"}
+            {verificationEmail !== null ? "Check your email" : isSignUp ? "Create your account" : "Sign in to your kitchen"}
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            {isSignUp ? "Save inspiration, simplify shopping, and keep dinner moving." : "Pick up where you left off."}
+            {verificationEmail !== null
+              ? `Enter the six-digit code sent to ${verificationEmail} to confirm your email address.`
+              : isSignUp ? "Save inspiration, simplify shopping, and keep dinner moving." : "Pick up where you left off."}
           </p>
 
           {error && (
@@ -155,7 +199,30 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
             </Alert>
           )}
 
-          <form className="mt-8 grid gap-4" onSubmit={handleSubmit}>
+          {verificationEmail !== null && (
+            <form className="mt-8 grid gap-4" onSubmit={handleVerification}>
+              <label className="grid gap-2 text-sm font-bold">
+                Confirmation code
+                <Input required autoFocus name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="123456" />
+              </label>
+              <Button disabled={isSubmitting} type="submit" size="lg" className="mt-2">
+                {isSubmitting ? "Confirming…" : "Confirm email"}
+                {!isSubmitting && <ArrowRight size={17} />}
+              </Button>
+              <button
+                className="text-sm font-bold text-primary underline underline-offset-4"
+                type="button"
+                onClick={() => {
+                  setVerificationEmail(null);
+                  setError(null);
+                }}
+              >
+                Use a different email
+              </button>
+            </form>
+          )}
+
+          <form className="mt-8 grid gap-4" hidden={verificationEmail !== null} onSubmit={handleSubmit}>
             {isSignUp && (
               <label className="grid gap-2 text-sm font-bold">
                 Name
@@ -187,7 +254,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
             </Button>
           </form>
 
-          <p className="mt-6 text-sm text-muted-foreground">
+          <p className="mt-6 text-sm text-muted-foreground" hidden={verificationEmail !== null}>
             {isSignUp ? "Already have an account?" : "New to PerfectPlate?"}{" "}
             <Link className="font-bold text-primary underline underline-offset-4" href={isSignUp ? "/sign-in" : "/sign-up"}>
               {isSignUp ? "Sign in" : "Create an account"}

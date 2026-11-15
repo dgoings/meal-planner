@@ -9,8 +9,10 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 
-export function AddRecipeToListButton({ recipeId, size = "default", variant = "default", className }: {
+export function AddRecipeToListButton({ recipeId, size = "default", variant = "default", className, servings, baseServings }: {
   recipeId: string;
+  servings?: number;
+  baseServings?: number;
   size?: "default" | "sm";
   variant?: "default" | "secondary";
   className?: string;
@@ -24,6 +26,10 @@ export function AddRecipeToListButton({ recipeId, size = "default", variant = "d
   const [selectedListId, setSelectedListId] = useState<Id<"groceryLists"> | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState(false);
+  const servingsMultiplier =
+    servings !== undefined && baseServings !== undefined && baseServings > 0 && servings !== baseServings
+      ? servings / baseServings
+      : undefined;
   const activeLists = Array.isArray(lists)
     ? lists.filter((list) => list.status === "active")
     : [];
@@ -42,7 +48,7 @@ export function AddRecipeToListButton({ recipeId, size = "default", variant = "d
     setError(false);
     setIsAdding(true);
     try {
-      const listId = await createFromRecipe({ recipeId: recipeId as Id<"recipes">, forceNew });
+      const listId = await createFromRecipe({ recipeId: recipeId as Id<"recipes">, forceNew, servingsMultiplier });
       setIsAdding(false);
       setConfirmingDuplicate(false);
       setOpen(false);
@@ -58,7 +64,7 @@ export function AddRecipeToListButton({ recipeId, size = "default", variant = "d
     setError(false);
     setIsAdding(true);
     try {
-      const listId = await addRecipeToList({ recipeId: recipeId as Id<"recipes">, listId: selectedListId });
+      const listId = await addRecipeToList({ recipeId: recipeId as Id<"recipes">, listId: selectedListId, servingsMultiplier });
       setIsAdding(false);
       setOpen(false);
       router.push(`/app/grocery-lists/${listId}`);
@@ -90,7 +96,7 @@ export function AddRecipeToListButton({ recipeId, size = "default", variant = "d
           ) : (
             <>
               <DialogTitle>Add to grocery list</DialogTitle>
-              <DialogDescription>Create a new list from this recipe or add its ingredients to one you already use.</DialogDescription>
+              <DialogDescription>Create a new list from this recipe or add its ingredients to one you already use.{servingsMultiplier !== undefined && ` Amounts will be scaled for ${servings} servings.`}</DialogDescription>
               <div className="mt-6 grid gap-3">
                 <button
                   type="button"

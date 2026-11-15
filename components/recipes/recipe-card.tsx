@@ -3,7 +3,7 @@
 import { useMutation } from "convex/react";
 import Link from "next/link";
 import { useState } from "react";
-import { BookCheck, BookPlus, Clock3, Users } from "lucide-react";
+import { BookCheck, BookPlus, Clock3, Heart, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -36,6 +36,17 @@ export function RecipeCard({
   const [saveError, setSaveError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const addToBook = useMutation(api.recipeCards.addToBook);
+  const setFavorite = useMutation(api.recipeCards.setFavorite);
+  const [favoriteError, setFavoriteError] = useState(false);
+
+  async function toggleFavorite() {
+    setFavoriteError(false);
+    try {
+      await setFavorite({ recipeId: recipe.id as Id<"recipes">, isFavorite: !recipe.isFavorite });
+    } catch {
+      setFavoriteError(true);
+    }
+  }
 
   async function save() {
     setIsSaving(true);
@@ -88,7 +99,20 @@ export function RecipeCard({
       )}
       <CardContent className="stack">
         <div>
-          {detailsHref ? <Link href={detailsHref}><h3>{recipe.title}</h3></Link> : <h3>{recipe.title}</h3>}
+          <div className="flex items-start justify-between gap-2">
+            {detailsHref ? <Link href={detailsHref}><h3>{recipe.title}</h3></Link> : <h3>{recipe.title}</h3>}
+            {recipe.isFavorite !== undefined && (
+              <button
+                type="button"
+                className={`grid size-9 shrink-0 place-items-center rounded-lg hover:bg-surface-subtle ${recipe.isFavorite ? "text-primary" : "text-muted-foreground"}`}
+                aria-pressed={recipe.isFavorite}
+                aria-label={recipe.isFavorite ? `Remove ${recipe.title} from favorites` : `Add ${recipe.title} to favorites`}
+                onClick={() => void toggleFavorite()}
+              >
+                <Heart size={18} fill={recipe.isFavorite ? "currentColor" : "none"} />
+              </button>
+            )}
+          </div>
           <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{recipe.description}</p>
         </div>
         <div className="recipe-meta">
@@ -107,6 +131,7 @@ export function RecipeCard({
           <CurrentRecipeButton className="w-full" recipeId={recipe.id} variant="secondary" />
           {(canCreateGroceryList || (suggested && saved)) && <AddRecipeToListButton className="recipe-card-grocery-action w-full" recipeId={recipe.id} size="sm" />}
         </div>
+        {favoriteError && <p className="text-xs font-bold text-red-700" role="alert">Couldn&apos;t update your favorites. Try again.</p>}
         {saveError && <p className="text-xs font-bold text-red-700" role="alert">Couldn&apos;t add this recipe to your book. Try again.</p>}
         <p className="text-xs text-muted-foreground">Source: {recipe.source}</p>
       </CardContent>

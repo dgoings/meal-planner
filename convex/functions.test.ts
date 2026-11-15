@@ -17,6 +17,7 @@ async function createUser(t: ReturnType<typeof convexTest>, name: string) {
     ctx.db.insert("users", {
       name,
       email: `${name.toLowerCase()}@example.com`,
+      emailVerificationTime: Date.now(),
       createdAt: Date.now(),
     }),
   );
@@ -207,7 +208,7 @@ describe("email functions", () => {
     expect(email.recipeId).toBeUndefined();
   });
 
-  it("does not retry a URL by email after the same URL failed in Discover", async () => {
+  it("does not retry a URL by email after extraction found no recipe in Discover", async () => {
     const t = initTest();
     const userId = await createUser(t, "FailedDiscoverUrl");
     const importId = await t.run(async (ctx) => {
@@ -220,7 +221,7 @@ describe("email functions", () => {
         status: "failed",
         attemptCount: 1,
         workflowId: "failed-workflow",
-        errorMessage: "recipe_scrape_failed",
+        errorMessage: "The agent did not find a complete recipe",
         createdAt: now,
         updatedAt: now,
       });
@@ -247,6 +248,85 @@ describe("email functions", () => {
     );
     expect(email.status).toBe("failed");
     expect(email.recipeId).toBeUndefined();
+  });
+
+  it("retries a failed scrape on resubmission until the attempt limit", async () => {
+    const t = initTest();
+    const userId = await createUser(t, "RetryCook");
+    const importId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("recipeImports", {
+        requestedBy: userId,
+        sourceUrl: "https://example.com/flaky-recipe",
+        normalizedUrl: "https://example.com/flaky-recipe",
+        sourceKind: "direct",
+        status: "failed",
+        attemptCount: 1,
+        workflowId: "failed-workflow",
+        errorMessage: "recipe_scrape_failed: could not reach example.com",
+        finishedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const start = vi.fn().mockResolvedValue("retry-workflow");
+
+    const retried = await t.run(async (ctx) =>
+      queueRecipeSource(
+        ctx,
+        { userId, sourceUrl: "https://example.com/flaky-recipe", sourceKind: "direct" },
+        start,
+      ),
+    );
+    expect(retried).toEqual({ importId, queued: true });
+    const restarted = await t.run(async (ctx) => ctx.db.get(importId));
+    expect(restarted).toMatchObject({ status: "queued", workflowId: "retry-workflow" });
+    expect(restarted?.errorMessage).toBeUndefined();
+
+    await t.run(async (ctx) =>
+      ctx.db.patch(importId, { status: "failed", attemptCount: 5 }),
+    );
+    const exhausted = await t.run(async (ctx) =>
+      queueRecipeSource(
+        ctx,
+        { userId, sourceUrl: "https://example.com/flaky-recipe", sourceKind: "direct" },
+        start,
+      ),
+    );
+    expect(exhausted).toEqual({ importId, queued: false });
+    expect(start).toHaveBeenCalledTimes(1);
+
+    const asOwner = t.withIdentity({ subject: userId });
+    await expect(
+      asOwner.mutation(api.recipeIngestion.retryImport, { importId }),
+    ).rejects.toThrow(/too many times/);
+    const strangerId = await createUser(t, "RetryStranger");
+    await expect(
+      t.withIdentity({ subject: strangerId }).mutation(api.recipeIngestion.retryImport, { importId }),
+    ).rejects.toThrow(/not found/);
+    await expect(
+      t.mutation(api.recipeIngestion.retryImport, { importId }),
+    ).rejects.toThrow(/Unauthenticated/);
+  });
+
+  it("ignores forwards from an account whose email is not verified", async () => {
+    const t = initTest();
+    const userId = await t.run(async (ctx) =>
+      ctx.db.insert("users", { name: "Unverified", email: "unverified@example.com", createdAt: Date.now() }),
+    );
+
+    expect(await t.mutation(internal.email.onMessageReceived, {
+      eventId: "unverified-forward-event",
+      thread: {},
+      message: {
+        inbox_id: "inbox-1",
+        from: "unverified@example.com",
+        text: "https://example.com/some-recipe",
+      },
+    })).toEqual({ queued: 0 });
+    expect(
+      await t.withIdentity({ subject: userId }).query(api.email.recentInboundEmails),
+    ).toEqual([]);
   });
 
   it("reimports an emailed URL when its previous recipe was deleted", async () => {
@@ -486,6 +566,34 @@ describe("user settings", () => {
   });
 });
 
+describe("email verification migration", () => {
+  it("confirms accounts created before the cutoff and leaves newer ones alone", async () => {
+    const t = initTest();
+    const { oldId, newId, oldAccountId, newAccountId } = await t.run(async (ctx) => {
+      const oldId = await ctx.db.insert("users", { name: "Old", email: "old@example.com" });
+      const newId = await ctx.db.insert("users", { name: "New", email: "new@example.com" });
+      const oldAccountId = await ctx.db.insert("authAccounts", { userId: oldId, provider: "password", providerAccountId: "old@example.com" });
+      const newAccountId = await ctx.db.insert("authAccounts", { userId: newId, provider: "password", providerAccountId: "new@example.com" });
+      return { oldId, newId, oldAccountId, newAccountId };
+    });
+    const cutoff = await t.run(async (ctx) => (await ctx.db.get(newId))!._creationTime);
+
+    expect(
+      await t.mutation(internal.migrations.grandfatherEmailVerification, { createdBefore: cutoff }),
+    ).toEqual({ users: 1, accounts: 1, done: true });
+    expect(
+      await t.mutation(internal.migrations.grandfatherEmailVerification, { createdBefore: cutoff }),
+    ).toEqual({ users: 0, accounts: 0, done: true });
+
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(oldId))?.emailVerificationTime).toBeTypeOf("number");
+      expect((await ctx.db.get(oldAccountId))?.emailVerified).toBe("old@example.com");
+      expect((await ctx.db.get(newId))?.emailVerificationTime).toBeUndefined();
+      expect((await ctx.db.get(newAccountId))?.emailVerified).toBeUndefined();
+    });
+  });
+});
+
 describe("recipe authorization", () => {
   it("keeps previews out of the Recipe Book until the user saves them", async () => {
     const t = initTest();
@@ -509,10 +617,8 @@ describe("recipe authorization", () => {
     });
 
     const asAda = t.withIdentity({ subject: adaId });
-    const visible = await asAda.query(api.recipes.list);
-    expect(new Set(visible.map((recipe) => recipe._id))).toEqual(
-      new Set([publicId, adaPrivateId, sharedId]),
-    );
+    const visible = await asAda.query(api.recipes.listBook);
+    expect(visible.map((recipe) => recipe._id)).toEqual([sharedId]);
     expect(await asAda.query(api.recipes.get, { recipeId: publicId })).toMatchObject({
       recipe: { _id: publicId },
     });
@@ -538,13 +644,52 @@ describe("recipe authorization", () => {
     await asAda.mutation(api.recipeCards.addToBook, { recipeId: adaPrivateId });
     await asAda.mutation(api.recipeCards.addToBook, { recipeId: adaPrivateId });
     expect(
-      new Set((await asAda.query(api.recipes.list)).map((recipe) => recipe._id)),
-    ).toEqual(new Set([publicId, adaPrivateId, sharedId]));
+      new Set((await asAda.query(api.recipes.listBook)).map((recipe) => recipe._id)),
+    ).toEqual(new Set([adaPrivateId, sharedId]));
+  });
+
+  it("limits notes and favorites to saved recipes and editing to the owner", async () => {
+    const t = initTest();
+    const adaId = await createUser(t, "Ada");
+    const publicId = await createRecipe(t, "public", { isPublic: true });
+    const ownId = await createRecipe(t, "own", { requestedBy: adaId });
+    const asAda = t.withIdentity({ subject: adaId });
+
+    expect(await asAda.query(api.recipes.get, { recipeId: publicId })).toMatchObject({
+      canEdit: false,
+    });
+    expect(await asAda.query(api.recipes.get, { recipeId: ownId })).toMatchObject({
+      canEdit: true,
+    });
+    await expect(
+      asAda.mutation(api.recipeCards.setNotes, { recipeId: ownId, notes: "Early" }),
+    ).rejects.toThrow(/not in your Recipe Book/);
+    await expect(
+      asAda.mutation(api.recipeCards.setFavorite, { recipeId: publicId, isFavorite: true }),
+    ).rejects.toThrow(/not in your Recipe Book/);
+
+    await asAda.mutation(api.recipeCards.addToBook, { recipeId: publicId });
+    await asAda.mutation(api.recipeCards.setNotes, { recipeId: publicId, notes: "Mine" });
+    await asAda.mutation(api.recipeCards.setFavorite, { recipeId: publicId, isFavorite: true });
+    expect(await asAda.query(api.recipes.listBook)).toMatchObject([
+      { _id: publicId, isFavorite: true },
+    ]);
+    expect(await asAda.query(api.recipes.get, { recipeId: publicId })).toMatchObject({
+      saved: { notes: "Mine", isFavorite: true },
+    });
+
+    await asAda.mutation(api.recipeCards.removeFromBook, { recipeId: publicId });
+    await asAda.mutation(api.recipeCards.removeFromBook, { recipeId: publicId });
+    expect(await asAda.query(api.recipes.listBook)).toEqual([]);
+    expect(await asAda.query(api.recipes.get, { recipeId: publicId })).toMatchObject({
+      recipe: { _id: publicId },
+      saved: null,
+    });
   });
 
   it("rejects anonymous access", async () => {
     const t = initTest();
-    await expect(t.query(api.recipes.list)).rejects.toThrow(/Unauthenticated/);
+    await expect(t.query(api.recipes.listBook)).rejects.toThrow(/Unauthenticated/);
   });
 });
 
@@ -866,6 +1011,7 @@ describe("editable recipe cards", () => {
       servings: 6,
       instructions: [{ position: 99, text: "Mix everything." }],
     });
+    await asOwner.mutation(api.recipeCards.addToBook, { recipeId });
     await asOwner.mutation(api.recipeCards.setNotes, {
       recipeId,
       notes: "Use less salt next time.",
@@ -1081,6 +1227,7 @@ describe("recipe card validation branches", () => {
         { position: 9, text: "  Stir gently.  ", section: "  Sauce  " },
       ],
     });
+    await asOwner.mutation(api.recipeCards.addToBook, { recipeId });
     await asOwner.mutation(api.recipeCards.setNotes, {
       recipeId,
       notes: "First note",
@@ -1275,6 +1422,56 @@ describe("grocery list validation branches", () => {
     expect(result?.itemSources.find((source) =>
       source.itemId === result.items.find((item) => item.normalizedName === "bread")?._id
     )?.recipeTitles).toEqual(["pancakes"]);
+  });
+
+  it("scales amounts for the chosen servings and files items by store section", async () => {
+    const t = initTest();
+    const ownerId = await createUser(t, "ScalingCook");
+    const asOwner = t.withIdentity({ subject: ownerId });
+    const recipeId = await createRecipe(t, "scaled-soup", { requestedBy: ownerId });
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const carrotId = await ctx.db.insert("ingredients", { name: "Carrots", normalizedName: "carrots", category: "Fresh vegetables", createdAt: now, updatedAt: now });
+      await ctx.db.insert("recipeIngredients", { recipeId, ingredientId: carrotId, position: 1, originalText: "2 carrots", name: "Carrots", normalizedName: "carrots", quantity: 2, isOptional: false });
+      await ctx.db.insert("recipeIngredients", { recipeId, position: 2, originalText: "Salt, to taste", name: "Salt", normalizedName: "salt", isOptional: false });
+    });
+
+    const listId = await asOwner.mutation(api.groceryLists.createFromRecipe, { recipeId, servingsMultiplier: 1.5 });
+    const created = await asOwner.query(api.groceryLists.get, { listId });
+    expect(created?.items.find((item) => item.normalizedName === "carrots")).toMatchObject({ quantity: 3, quantityText: "3", category: "Produce" });
+    expect(created?.items.find((item) => item.normalizedName === "salt")?.quantity).toBeUndefined();
+
+    const weekendId = await asOwner.mutation(api.groceryLists.create, { name: "Weekend" });
+    await asOwner.mutation(api.groceryLists.addRecipeToList, { recipeId, listId: weekendId, servingsMultiplier: 2 });
+    const added = await asOwner.query(api.groceryLists.get, { listId: weekendId });
+    expect(added?.items.find((item) => item.normalizedName === "carrots")).toMatchObject({ quantity: 4, category: "Produce" });
+
+    await expect(
+      asOwner.mutation(api.groceryLists.createFromRecipe, { recipeId, forceNew: true, servingsMultiplier: 0 }),
+    ).rejects.toThrow(/Servings multiplier/);
+  });
+
+  it("keeps items the saving client never loaded and deletes explicit removals", async () => {
+    const t = initTest();
+    const ownerId = await createUser(t, "StaleEditorCook");
+    const asOwner = t.withIdentity({ subject: ownerId });
+    const listId = await asOwner.mutation(api.groceryLists.create, { name: "Shared trip" });
+    const milkId = await asOwner.mutation(api.groceryLists.addItem, { listId, name: "Milk" });
+    const breadId = await asOwner.mutation(api.groceryLists.addItem, { listId, name: "Bread" });
+    const addedElsewhereId = await asOwner.mutation(api.groceryLists.addItem, { listId, name: "Eggs" });
+
+    await asOwner.mutation(api.groceryLists.save, {
+      listId,
+      requestId: "stale-editor-save",
+      name: "Shared trip",
+      removedItemIds: [breadId],
+      items: [{ itemId: milkId, name: "Milk", isChecked: true, sortOrder: 1 }],
+    });
+
+    const result = await asOwner.query(api.groceryLists.get, { listId });
+    expect(new Set(result?.items.map((item) => item._id))).toEqual(
+      new Set([milkId, addedElsewhereId]),
+    );
   });
 
   it("adds an imported recipe that is not in the Recipe Book to an existing list", async () => {

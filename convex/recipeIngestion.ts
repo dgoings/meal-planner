@@ -79,6 +79,29 @@ type StartIngestion = (
   importId: Id<"recipeImports">,
 ) => Promise<string>;
 
+const MAX_IMPORT_ATTEMPTS = 5;
+
+// Extraction already read the page and found no recipe; running the model on
+// the same page again would spend credits for the same answer.
+function isPermanentImportFailure(errorMessage: string | undefined) {
+  return errorMessage?.includes("did not find a complete recipe") ?? false;
+}
+
+async function restartImport(
+  ctx: MutationCtx,
+  importId: Id<"recipeImports">,
+  startIngestion: StartIngestion,
+) {
+  const workflowId = await startIngestion(ctx, importId);
+  await ctx.db.patch(importId, {
+    workflowId,
+    status: "queued",
+    errorMessage: undefined,
+    finishedAt: undefined,
+    updatedAt: Date.now(),
+  });
+}
+
 function boundedMetadata(value: string | undefined, maximum: number) {
   const trimmed = value?.trim();
   return trimmed ? trimmed.slice(0, maximum) : undefined;
@@ -119,21 +142,18 @@ export async function queueRecipeSource(
         });
       }
     }
-    // A failed normalized URL remains failed across every entry point. This
-    // prevents an email forward from spending credits retrying a site that the
-    // Discover importer already proved could not produce a complete recipe.
     if (existing.status === "failed") {
-      return { importId: existing._id, queued: false };
+      if (
+        isPermanentImportFailure(existing.errorMessage) ||
+        existing.attemptCount >= MAX_IMPORT_ATTEMPTS
+      ) {
+        return { importId: existing._id, queued: false };
+      }
+      await restartImport(ctx, existing._id, startIngestion);
+      return { importId: existing._id, queued: true };
     }
     if (existing.workflowId === undefined) {
-      const workflowId = await startIngestion(ctx, existing._id);
-      await ctx.db.patch(existing._id, {
-        workflowId,
-        status: "queued",
-        errorMessage: undefined,
-        finishedAt: undefined,
-        updatedAt: Date.now(),
-      });
+      await restartImport(ctx, existing._id, startIngestion);
       return { importId: existing._id, queued: true };
     }
     return { importId: existing._id, queued: false };
@@ -159,6 +179,25 @@ export async function queueRecipeSource(
   await ctx.db.patch(importId, { workflowId });
   return { importId, queued: true };
 }
+
+export const retryImport = mutation({
+  args: { importId: v.id("recipeImports") },
+  returns: v.null(),
+  handler: async (ctx, { importId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) throw new Error("Unauthenticated");
+    const recipeImport = await ctx.db.get(importId);
+    if (recipeImport === null || recipeImport.requestedBy !== userId) {
+      throw new Error("Recipe import was not found");
+    }
+    if (recipeImport.status !== "failed") return null;
+    if (recipeImport.attemptCount >= MAX_IMPORT_ATTEMPTS) {
+      throw new Error("This recipe link has been retried too many times");
+    }
+    await restartImport(ctx, importId, startRecipeIngestion);
+    return null;
+  },
+});
 
 export const queueAgentDiscoveredUrl = internalMutation({
   args: {

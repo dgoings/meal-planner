@@ -43,6 +43,7 @@ vi.mock("convex/react", () => ({
       warnings: ["Check the cooking time."],
       generatedGroceryListId: "list-1",
     },
+    canEdit: true,
   }),
   useMutation: () => mocks.mutation,
 }));
@@ -82,6 +83,26 @@ describe("RecipeDetail", () => {
       }),
     );
     expect(screen.getByRole("button", { name: "Edit recipe" })).toBeInTheDocument();
+  });
+
+  it("confirms removal in a dialog and carries scaled servings to the grocery list", async () => {
+    const user = userEvent.setup();
+    render(<RecipeDetail recipeId="recipe-1" />);
+
+    await user.click(screen.getByRole("button", { name: "Increase servings" }));
+    await user.click(screen.getByRole("button", { name: "Add to grocery list" }));
+    expect(screen.getByText(/Amounts will be scaled for 5 servings/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close dialog" }));
+
+    await user.click(screen.getByRole("button", { name: "Favorite" }));
+    expect(mocks.mutation).toHaveBeenCalledWith({ recipeId: "recipe-1", isFavorite: true });
+
+    await user.click(screen.getByRole("button", { name: "Remove recipe" }));
+    expect(screen.getByRole("heading", { name: "Remove this recipe?" })).toBeInTheDocument();
+    expect(mocks.replace).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(mocks.mutation).toHaveBeenCalledWith({ recipeId: "recipe-1" });
+    expect(mocks.replace).toHaveBeenCalledWith("/app/recipe-book");
   });
 
   it("uploads a photo when the recipe has none", async () => {

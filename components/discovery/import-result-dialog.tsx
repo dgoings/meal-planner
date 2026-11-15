@@ -1,7 +1,8 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { BookPlus, LoaderCircle } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import { BookPlus, LoaderCircle, RotateCcw } from "lucide-react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,18 @@ export function ImportResultDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
+  const retryImport = useMutation(api.recipeIngestion.retryImport);
+  const [retryFailed, setRetryFailed] = useState(false);
+
+  async function retry() {
+    if (importId === null) return;
+    setRetryFailed(false);
+    try {
+      await retryImport({ importId });
+    } catch {
+      setRetryFailed(true);
+    }
+  }
   const importResult = useQuery(
     api.email.importResult,
     importId === null ? "skip" : { importId },
@@ -31,12 +44,15 @@ export function ImportResultDialog({
       <DialogContent className="w-[min(94vw,640px)]">
         <DialogTitle>Recipe result</DialogTitle>
         <DialogDescription>
-          The link is processed once. Choose the result to open its recipe page before deciding whether to save it.
+          Choose the result to open its recipe page before deciding whether to save it.
         </DialogDescription>
         {importResult?.status === "failed" ? (
           <Alert className="mt-5 border-red-300 bg-red-50 text-red-900" role="alert">
             <AlertTitle>Recipe import failed</AlertTitle>
             <AlertDescription>{recipeImportFailureMessage(importResult.errorMessage)}</AlertDescription>
+            {retryFailed
+              ? <p className="mt-3 text-sm font-bold">This link can’t be retried again.</p>
+              : <Button className="mt-3" size="sm" variant="secondary" onClick={() => void retry()}><RotateCcw size={16} />Try again</Button>}
           </Alert>
         ) : importResult?.recipeId ? (
           <Card className="mt-5">

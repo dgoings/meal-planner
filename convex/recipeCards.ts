@@ -49,6 +49,21 @@ async function requireOwnedRecipe(
   return recipe;
 }
 
+async function requireSavedRecipe(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  recipeId: Id<"recipes">,
+) {
+  const saved = await ctx.db
+    .query("savedRecipes")
+    .withIndex("by_user_and_recipe", (q) =>
+      q.eq("userId", userId).eq("recipeId", recipeId),
+    )
+    .unique();
+  if (saved === null) throw new Error("Recipe is not in your Recipe Book");
+  return saved;
+}
+
 function finiteNumber(
   value: number,
   label: string,
@@ -366,27 +381,38 @@ export const setNotes = mutation({
   returns: v.null(),
   handler: async (ctx, { recipeId, notes }) => {
     const userId = await requireUser(ctx);
-    await requireOwnedRecipe(ctx, userId, recipeId);
+    const saved = await requireSavedRecipe(ctx, userId, recipeId);
+    await ctx.db.patch(saved._id, {
+      notes: optionalString(notes)?.slice(0, 10_000),
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+export const setFavorite = mutation({
+  args: { recipeId: v.id("recipes"), isFavorite: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, { recipeId, isFavorite }) => {
+    const userId = await requireUser(ctx);
+    const saved = await requireSavedRecipe(ctx, userId, recipeId);
+    await ctx.db.patch(saved._id, { isFavorite, updatedAt: Date.now() });
+    return null;
+  },
+});
+
+export const removeFromBook = mutation({
+  args: { recipeId: v.id("recipes") },
+  returns: v.null(),
+  handler: async (ctx, { recipeId }) => {
+    const userId = await requireUser(ctx);
     const saved = await ctx.db
       .query("savedRecipes")
       .withIndex("by_user_and_recipe", (q) =>
         q.eq("userId", userId).eq("recipeId", recipeId),
       )
       .unique();
-    const now = Date.now();
-    const normalizedNotes = optionalString(notes)?.slice(0, 10_000);
-    if (saved === null) {
-      await ctx.db.insert("savedRecipes", {
-        userId,
-        recipeId,
-        notes: normalizedNotes,
-        isFavorite: false,
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(saved._id, { notes: normalizedNotes, updatedAt: now });
-    }
+    if (saved !== null) await ctx.db.delete(saved._id);
     return null;
   },
 });

@@ -27,7 +27,10 @@ const ingredients = [
 
 describe("ingredient scaling", () => {
   it("formats readable quantities and preserves original text at 1x", () => {
-    expect(formatQuantity(1.234)).toBe("1.23");
+    expect(formatQuantity(1.29)).toBe("1.29");
+    expect(formatQuantity(1.5)).toBe("1 1/2");
+    expect(formatQuantity(1 / 3)).toBe("1/3");
+    expect(formatQuantity(2.999)).toBe("3");
     expect(scaledIngredientText(ingredients[0], 1)).toBe(
       "1 1/2 cups chickpeas, drained",
     );
@@ -44,7 +47,7 @@ describe("ingredient scaling", () => {
     expect(screen.getByText("For 4 servings")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Increase servings" }));
     expect(screen.getByText("For 5 servings")).toBeInTheDocument();
-    expect(screen.getByText("1.88 cups chickpeas drained")).toBeInTheDocument();
+    expect(screen.getByText("1 7/8 cups chickpeas drained")).toBeInTheDocument();
   });
 
   it("preserves source amounts when the recipe has no serving count", () => {

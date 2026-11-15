@@ -65,6 +65,13 @@ const recipeIngredientValidator = v.object({
   isOptional: v.boolean(),
 });
 
+const bookRecipeValidator = v.object({
+  ...recipeValidator.fields,
+  isFavorite: v.boolean(),
+});
+
+const RECIPE_BOOK_LIMIT = 500;
+
 const importStatusValidator = v.union(
   v.literal("queued"),
   v.literal("scraping"),
@@ -102,51 +109,6 @@ async function recipeView(ctx: QueryCtx, recipe: Doc<"recipes">) {
   };
 }
 
-export const list = query({
-  args: {},
-  returns: v.array(recipeValidator),
-  handler: async (ctx) => {
-    const userId = await requireUser(ctx);
-    const [publicRecipes, imports, savedRecipes] = await Promise.all([
-      ctx.db
-        .query("recipes")
-        .withIndex("by_public_and_deleted_at", (q) =>
-          q.eq("isPublic", true).eq("deletedAt", undefined),
-        )
-        .take(200),
-      ctx.db
-        .query("recipeImports")
-        .withIndex("by_requester", (q) => q.eq("requestedBy", userId))
-        .take(200),
-      ctx.db
-        .query("savedRecipes")
-        .withIndex("by_user", (q) => q.eq("userId", userId))
-        .take(200),
-    ]);
-
-    const recipeIds = new Set<Id<"recipes">>([
-      ...imports.flatMap((item) => (item.recipeId ? [item.recipeId] : [])),
-      ...savedRecipes.map((item) => item.recipeId),
-    ]);
-    const privateRecipes = await Promise.all(
-      [...recipeIds].map((recipeId) => ctx.db.get(recipeId)),
-    );
-    const recipesById = new Map<string, Doc<"recipes">>();
-    for (const recipe of [...publicRecipes, ...privateRecipes]) {
-      if (recipe !== null && recipe.deletedAt === undefined) {
-        recipesById.set(recipe._id, recipe);
-      }
-    }
-
-    const sortedRecipes = [...recipesById.values()].sort(
-      (a, b) => b._creationTime - a._creationTime,
-    );
-    return await Promise.all(
-      sortedRecipes.map((recipe) => recipeView(ctx, recipe)),
-    );
-  },
-});
-
 export const listRecent = query({
   args: {},
   returns: v.array(recipeValidator),
@@ -171,19 +133,30 @@ export const listRecent = query({
 
 export const listBook = query({
   args: {},
-  returns: v.array(recipeValidator),
+  returns: v.array(bookRecipeValidator),
   handler: async (ctx) => {
     const userId = await requireUser(ctx);
     const saved = await ctx.db
       .query("savedRecipes")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .order("desc")
-      .take(200);
-    const recipes = await Promise.all(saved.map((item) => ctx.db.get(item.recipeId)));
+      .take(RECIPE_BOOK_LIMIT);
+    const entries = await Promise.all(
+      saved.map(async (item) => ({
+        recipe: await ctx.db.get(item.recipeId),
+        isFavorite: item.isFavorite,
+      })),
+    );
     return await Promise.all(
-      recipes
-        .filter((recipe): recipe is Doc<"recipes"> => recipe !== null && recipe.deletedAt === undefined)
-        .map((recipe) => recipeView(ctx, recipe)),
+      entries
+        .filter(
+          (entry): entry is { recipe: Doc<"recipes">; isFavorite: boolean } =>
+            entry.recipe !== null && entry.recipe.deletedAt === undefined,
+        )
+        .map(async ({ recipe, isFavorite }) => ({
+          ...(await recipeView(ctx, recipe)),
+          isFavorite,
+        })),
     );
   },
 });
@@ -196,7 +169,7 @@ export const savedIds = query({
     const saved = await ctx.db
       .query("savedRecipes")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .take(200);
+      .take(RECIPE_BOOK_LIMIT);
     return saved.map((item) => item.recipeId);
   },
 });
@@ -265,6 +238,7 @@ export const get = query({
         }),
       ),
       importReview: v.union(v.null(), importReviewValidator),
+      canEdit: v.boolean(),
     }),
   ),
   handler: async (ctx, { recipeId }) => {
@@ -314,6 +288,7 @@ export const get = query({
           ? null
           : { notes: savedRecipe.notes, isFavorite: savedRecipe.isFavorite },
       importReview,
+      canEdit: recipeImport?.requestedBy === userId,
     };
   },
 });

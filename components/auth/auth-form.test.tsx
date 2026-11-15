@@ -105,6 +105,39 @@ describe("AuthForm", () => {
     expect(alert).toHaveTextContent(description);
   });
 
+  it("asks a new account to confirm its email before signing in", async () => {
+    mocks.signIn
+      .mockResolvedValueOnce({ signingIn: false })
+      .mockRejectedValueOnce(new Error("Could not verify code"))
+      .mockResolvedValueOnce({ signingIn: true });
+    const user = userEvent.setup();
+    render(<AuthForm mode="sign-up" />);
+
+    await user.type(screen.getByLabelText("Name"), "Home Cook");
+    await user.type(screen.getByLabelText("Email"), "Cook@Example.com");
+    await user.type(screen.getByLabelText("Password"), "password123");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(screen.getByText(/code sent to cook@example.com/)).toBeInTheDocument();
+    expect(mocks.replace).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Confirmation code"), "000000");
+    await user.click(screen.getByRole("button", { name: "Confirm email" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Code not accepted");
+
+    await user.clear(screen.getByLabelText("Confirmation code"));
+    await user.type(screen.getByLabelText("Confirmation code"), "123456");
+    await user.click(screen.getByRole("button", { name: "Confirm email" }));
+
+    const verification = mocks.signIn.mock.calls[2][1] as FormData;
+    expect(Object.fromEntries(verification)).toEqual({
+      code: "123456",
+      email: "cook@example.com",
+      flow: "email-verification",
+    });
+    expect(mocks.replace).toHaveBeenCalledWith("/app/imports");
+  });
+
   it("explains when a sign-up email already has an account", async () => {
     mocks.signIn.mockRejectedValue(
       new Error("Account cook@example.com already exists"),

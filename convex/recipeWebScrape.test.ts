@@ -1,4 +1,5 @@
 import { convexTest } from "convex-test";
+import { lookup } from "node:dns/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { internal } from "./_generated/api";
 import schema from "./schema";
@@ -134,6 +135,34 @@ describe("recipe page scrape", () => {
       ).rejects.toThrow();
       expect(fetchMock).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("refuses a public-looking name that resolves to a private address", async () => {
+    vi.mocked(lookup).mockResolvedValueOnce([{ address: "10.0.0.5", family: 4 }] as never);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      initTest().action(internal.recipeWebScrape.scrapePage, {
+        url: "https://internal.example.com/stew",
+      }),
+    ).rejects.toThrow(/not public/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("stops reading a page that exceeds the size limit", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(new Uint8Array(5 * 1024 * 1024 + 1), {
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+    await expect(
+      initTest().action(internal.recipeWebScrape.scrapePage, {
+        url: "https://example.com/huge",
+      }),
+    ).rejects.toThrow(/too large/);
   });
 
   it("stops on redirect loops and redirects without a location", async () => {

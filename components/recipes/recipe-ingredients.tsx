@@ -16,7 +16,29 @@ type Ingredient = {
   isOptional: boolean;
 };
 
+const KITCHEN_FRACTIONS: Array<[number, string]> = [
+  [1 / 8, "1/8"],
+  [1 / 4, "1/4"],
+  [1 / 3, "1/3"],
+  [3 / 8, "3/8"],
+  [1 / 2, "1/2"],
+  [5 / 8, "5/8"],
+  [2 / 3, "2/3"],
+  [3 / 4, "3/4"],
+  [7 / 8, "7/8"],
+];
+
 export function formatQuantity(value: number) {
+  const whole = Math.floor(value);
+  const remainder = value - whole;
+  if (remainder < 0.02) return String(whole);
+  if (remainder > 0.98) return String(whole + 1);
+  const fraction = KITCHEN_FRACTIONS.find(
+    ([amount]) => Math.abs(amount - remainder) < 0.02,
+  );
+  if (fraction !== undefined && whole < 100) {
+    return whole === 0 ? fraction[1] : `${whole} ${fraction[1]}`;
+  }
   const rounded = Math.round(value * 100) / 100;
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(rounded);
 }
@@ -40,12 +62,21 @@ export function scaledIngredientText(
 export function RecipeIngredients({
   ingredients,
   initialServings,
+  servings: controlledServings,
+  onServingsChange,
 }: {
   ingredients: Ingredient[];
   initialServings?: number;
+  servings?: number;
+  onServingsChange?: (servings: number) => void;
 }) {
   const baseServings = Math.max(1, initialServings ?? 1);
-  const [servings, setServings] = useState(baseServings);
+  const [localServings, setLocalServings] = useState(baseServings);
+  const servings = controlledServings ?? localServings;
+  function setServings(next: number) {
+    setLocalServings(next);
+    onServingsChange?.(next);
+  }
   const multiplier = servings / baseServings;
   const canScale = initialServings !== undefined;
 
@@ -64,7 +95,7 @@ export function RecipeIngredients({
             variant="secondary"
             aria-label="Decrease servings"
             disabled={servings <= 1}
-            onClick={() => setServings((current) => Math.max(1, current - 1))}
+            onClick={() => setServings(Math.max(1, servings - 1))}
           >
             <Minus size={16} />
           </Button>
@@ -72,7 +103,7 @@ export function RecipeIngredients({
             size="icon"
             variant="secondary"
             aria-label="Increase servings"
-            onClick={() => setServings((current) => current + 1)}
+            onClick={() => setServings(servings + 1)}
           >
             <Plus size={16} />
           </Button>

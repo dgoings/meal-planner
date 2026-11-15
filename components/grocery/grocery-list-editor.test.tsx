@@ -93,6 +93,44 @@ describe("GroceryListEditor", () => {
     expect(mocks.replace).not.toHaveBeenCalled();
   });
 
+  it("saves a check-off immediately and sends only explicit removals", async () => {
+    const user = userEvent.setup();
+    mocks.save.mockResolvedValue("list-123");
+    const onSaved = vi.fn();
+    const item = (id: string, name: string) => ({ id, name, quantity: "1", unit: "", category: "Dairy & Eggs", checked: false });
+    const { rerender } = render(
+      <GroceryListEditor listId="list-123" onSaved={onSaved} initialItems={[item("item-1", "Milk"), item("item-2", "Eggs")]} />,
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: "Mark Milk complete" }));
+    expect(mocks.save).toHaveBeenCalledWith({ itemId: "item-1", isChecked: true });
+    expect(screen.queryByText("You have unsaved changes.")).not.toBeInTheDocument();
+
+    rerender(
+      <GroceryListEditor
+        listId="list-123"
+        onSaved={onSaved}
+        initialItems={[{ ...item("item-1", "Milk"), checked: true }, item("item-2", "Eggs"), item("item-3", "Butter")]}
+      />,
+    );
+    expect(screen.getByDisplayValue("Butter")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Remove Eggs" }));
+    expect(screen.getByText("You have unsaved changes.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Update list" }));
+
+    expect(mocks.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        removedItemIds: ["item-2"],
+        items: [
+          expect.objectContaining({ itemId: "item-1", isChecked: true }),
+          expect.objectContaining({ itemId: "item-3", name: "Butter" }),
+        ],
+      }),
+    );
+    expect(onSaved).toHaveBeenCalledOnce();
+  });
+
   it("labels a recipe-created draft as a first save", async () => {
     const user = userEvent.setup();
     mocks.save.mockResolvedValueOnce("list-123");
@@ -115,7 +153,18 @@ describe("GroceryListEditor", () => {
 
   it("adds, edits, checks, removes, and restores an item", async () => {
     const user = userEvent.setup();
-    render(<GroceryListEditor />);
+    render(
+      <GroceryListEditor
+        initialItems={["Spinach", "Lemons", "Orzo", "Beans", "Parmesan"].map((name) => ({
+          id: name,
+          name,
+          quantity: "1",
+          unit: "",
+          category: "Other",
+          checked: false,
+        }))}
+      />,
+    );
 
     expect(screen.getByText("5")).toBeInTheDocument();
     await user.type(screen.getByPlaceholderText("Add an ingredient"), "  Avocados  ");
@@ -129,7 +178,9 @@ describe("GroceryListEditor", () => {
     expect(screen.getByText("5")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Remove Avocados" }));
-    const status = screen.getByRole("status");
+    const status = screen
+      .getAllByRole("status")
+      .find((element) => element.textContent?.includes("removed"))!;
     expect(within(status).getByText(/Avocados/)).toBeInTheDocument();
     await user.click(within(status).getByRole("button", { name: "Undo" }));
     expect(screen.getByDisplayValue("Avocados")).toBeInTheDocument();
