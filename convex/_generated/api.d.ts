@@ -9,6 +9,7 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as crons from "../crons.js";
 import type * as email from "../email.js";
 import type * as groceryLists from "../groceryLists.js";
 import type * as http from "../http.js";
@@ -21,7 +22,6 @@ import type * as lib_recipeAgentTypes from "../lib/recipeAgentTypes.js";
 import type * as lib_recipeScrape from "../lib/recipeScrape.js";
 import type * as lib_recipeSearch from "../lib/recipeSearch.js";
 import type * as lib_urls from "../lib/urls.js";
-import type * as migrations from "../migrations.js";
 import type * as recipeAgent from "../recipeAgent.js";
 import type * as recipeAgentData from "../recipeAgentData.js";
 import type * as recipeCards from "../recipeCards.js";
@@ -42,6 +42,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  crons: typeof crons;
   email: typeof email;
   groceryLists: typeof groceryLists;
   http: typeof http;
@@ -54,7 +55,6 @@ declare const fullApi: ApiFromModules<{
   "lib/recipeScrape": typeof lib_recipeScrape;
   "lib/recipeSearch": typeof lib_recipeSearch;
   "lib/urls": typeof lib_urls;
-  migrations: typeof migrations;
   recipeAgent: typeof recipeAgent;
   recipeAgentData: typeof recipeAgentData;
   recipeCards: typeof recipeCards;
@@ -98,4 +98,8 @@ export declare const components: {
   agentmail: import("@agentmail/convex/_generated/component.js").ComponentApi<"agentmail">;
   agent: import("@convex-dev/agent/_generated/component.js").ComponentApi<"agent">;
   workflow: import("@convex-dev/workflow/_generated/component.js").ComponentApi<"workflow">;
+  auth: import("@convex-dev/auth/_generated/component.js").ComponentApi<"auth">;
+  authPassword: import("@convex-dev/auth/components/password/_generated/component.js").ComponentApi<"authPassword">;
+  authEmail: import("@convex-dev/auth/components/email/_generated/component.js").ComponentApi<"authEmail">;
+  resend: import("@convex-dev/resend/_generated/component.js").ComponentApi<"resend">;
 };

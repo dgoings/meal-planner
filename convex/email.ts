@@ -216,9 +216,10 @@ export const onMessageReceived = internalMutation({
       .query("users")
       .withIndex("email", (q) => q.eq("email", fromAddress))
       .unique();
-    // An unverified address proves nothing about who owns the mailbox, so its
-    // forwards are not attributed to the account that claimed it.
-    if (user === null || user.emailVerificationTime === undefined) {
+    // `users.email` is copied from Convex Auth only after the owner opens the
+    // confirmation link, so a match means the address is verified. Mail from
+    // an address that was never confirmed matches no user and is dropped.
+    if (user === null || user.deletionRequestedAt !== undefined) {
       return { queued: 0 };
     }
 
