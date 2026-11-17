@@ -218,4 +218,21 @@ describe("ConfirmEmailChangeLanding", () => {
 
     expectUnusableLink("Go to settings", "/app/settings");
   });
+
+  it("asks a signed-out user to sign in and come back to the same link", () => {
+    mocks.code = "abc/123";
+    mocks.completeChangeEmail.mockReturnValue({
+      status: "error",
+      userError: { error: "NOT_LOGGED_IN" },
+    });
+    render(<ConfirmEmailChangeLanding />);
+
+    expect(screen.getByText(/sign in to the account that asked for the change, then open the link again/i))
+      .toBeInTheDocument();
+    expect(screen.queryByText(/only work in the browser that requested them/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
+      "href",
+      `/sign-in?next=${encodeURIComponent("/confirm-email-change?code=abc%2F123")}`,
+    );
+  });
 });

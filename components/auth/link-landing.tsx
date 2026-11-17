@@ -15,6 +15,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/convex/_generated/api";
+import { safeAppRedirect } from "@/lib/navigation";
 import { authErrorMessage, type AuthErrorMessage } from "./auth-error-message";
 
 // The landing pages of the emailed links. Each link carries a `code`, and
@@ -212,7 +213,10 @@ function ConfirmEmailChange({ emailCode }: { emailCode: string }) {
   // the address the app stores for the user.
   const state = useCompleteChangeEmail(api.auth, { emailCode });
 
-  if (state.status === "error") return <UnusableLink action={GO_TO_SETTINGS} />;
+  if (state.status === "error") {
+    if (state.userError.error === "NOT_LOGGED_IN") return <SignInToConfirm emailCode={emailCode} />;
+    return <UnusableLink action={GO_TO_SETTINGS} />;
+  }
   if (state.status === "loading") return <Checking title="Confirming your new email…" />;
   return (
     <>
@@ -224,6 +228,29 @@ function ConfirmEmailChange({ emailCode }: { emailCode: string }) {
       <Button asChild size="lg" className="mt-8">
         <Link href="/app/settings">
           Back to settings
+          <ArrowRight size={17} />
+        </Link>
+      </Button>
+    </>
+  );
+}
+
+/**
+ * The change needs the session of the account that asked for it. The
+ * browser still holds the flow's secret, so after signing in the same link
+ * works.
+ */
+function SignInToConfirm({ emailCode }: { emailCode: string }) {
+  const next = safeAppRedirect(`/confirm-email-change?code=${encodeURIComponent(emailCode)}`);
+  return (
+    <>
+      <h1 className="font-display text-4xl font-semibold">Sign in to confirm</h1>
+      <p className="mt-3 text-sm leading-6 text-muted-foreground">
+        Sign in to the account that asked for the change, then open the link again.
+      </p>
+      <Button asChild size="lg" className="mt-8">
+        <Link href={`/sign-in?next=${encodeURIComponent(next)}`}>
+          Sign in
           <ArrowRight size={17} />
         </Link>
       </Button>

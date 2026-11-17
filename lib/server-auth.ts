@@ -1,6 +1,14 @@
-import { setupConvexAuthServer } from "@convex-dev/auth/ssr";
+import { setupConvexAuthServer, type AuthCookieOptions } from "@convex-dev/auth/ssr";
 import { api } from "@/convex/_generated/api";
 import { convexUrl } from "@/lib/convex-url";
+
+/**
+ * The auth cookie attributes, shared by the route handlers and the Next.js
+ * proxy and server helpers so both write the same cookies.
+ */
+export const authCookieOptions: AuthCookieOptions = {
+  secure: process.env.NODE_ENV === "production",
+};
 
 /**
  * The route handlers mounted at `/auth/signin`, `/auth/refresh`, and
@@ -16,5 +24,5 @@ export const auth = setupConvexAuthServer({
     api.auth.completeSignUpWithEmailPassword,
     api.auth.completePasswordRecovery,
   ],
-  cookieOptions: { secure: process.env.NODE_ENV === "production" },
+  cookieOptions: authCookieOptions,
 });
