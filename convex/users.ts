@@ -1,7 +1,8 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { components, internal } from "./_generated/api";
-import { internalMutation, mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 
 const UNVERIFIED_USER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const UNVERIFIED_USER_BATCH_SIZE = 100;
@@ -33,17 +34,25 @@ export const syncUserEmail = internalMutation({
   args: { method: emailPasswordMethod, userId: v.id("users") },
   returns: v.null(),
   handler: async (ctx, { userId }) => {
-    const user = await ctx.db.get(userId);
-    if (user === null) return null;
-    const primaryEmail = await ctx.runQuery(components.authEmail.verifiedEmails.getPrimaryEmail, { userId });
-    // Forwarded mail is matched on the lowercased sender address.
-    const email = primaryEmail?.trim().toLowerCase();
-    if (email !== undefined && email !== user.email) {
-      await ctx.db.patch(userId, { email, updatedAt: Date.now() });
-    }
+    await copyVerifiedEmail(ctx, userId);
     return null;
   },
 });
+
+/**
+ * Copies the user's primary verified email from the auth email component
+ * onto `users.email`. Runs at every sign-in and after an email change.
+ */
+export async function copyVerifiedEmail(ctx: MutationCtx, userId: Id<"users">) {
+  const user = await ctx.db.get(userId);
+  if (user === null) return;
+  const primaryEmail = await ctx.runQuery(components.authEmail.verifiedEmails.getPrimaryEmail, { userId });
+  // Forwarded mail is matched on the lowercased sender address.
+  const email = primaryEmail?.trim().toLowerCase();
+  if (email !== undefined && email !== user.email) {
+    await ctx.db.patch(userId, { email, updatedAt: Date.now() });
+  }
+}
 
 /**
  * Deletes accounts whose confirmation link was never opened. Sign-up creates

@@ -27,6 +27,12 @@ export default defineSchema({
     name: v.optional(v.string()),
     image: v.optional(v.string()),
     email: v.optional(v.string()),
+    // Leftovers from Convex Auth v1, kept only so rows written before the
+    // move to 2.0 still validate. Current code never writes or reads them.
+    emailVerificationTime: v.optional(v.number()),
+    phone: v.optional(v.string()),
+    phoneVerificationTime: v.optional(v.number()),
+    isAnonymous: v.optional(v.boolean()),
     avatarUrl: v.optional(v.string()),
     currentRecipeId: v.optional(v.id("recipes")),
     deletionRequestedAt: v.optional(v.number()),

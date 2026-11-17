@@ -4,9 +4,12 @@ import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { queueRecipeSource } from "./recipeIngestion";
 import {
+  emailedCode,
+  fromBrowser,
   initAuthTest,
   signedInUser,
   signUp,
+  TEST_PASSWORD,
   type AuthTest,
 } from "./testing.helpers";
 
@@ -75,6 +78,40 @@ async function createRecipe(
     });
     await ctx.db.patch(importId, { recipeId });
     return recipeId;
+  });
+}
+
+/**
+ * Forwards a link the user already imported, so the forward is recorded
+ * without starting a workflow. Returns the users the forward was attributed to.
+ */
+async function forwardKnownLink(t: AuthTest, from: string, eventId: string) {
+  await t.mutation(internal.email.onMessageReceived, {
+    eventId,
+    thread: {},
+    message: { inbox_id: "inbox-1", from, text: "https://example.com/known-recipe" },
+  });
+  return await t.run(async (ctx) =>
+    (await ctx.db.query("inboundRecipeEmails").collect())
+      .filter((email) => email.eventId === eventId)
+      .map((email) => email.userId),
+  );
+}
+
+async function importKnownLink(t: AuthTest, userId: Id<"users">) {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("recipeImports", {
+      requestedBy: userId,
+      sourceUrl: "https://example.com/known-recipe",
+      normalizedUrl: "https://example.com/known-recipe",
+      sourceKind: "email",
+      workflowId: "existing-workflow",
+      status: "queued",
+      attemptCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
   });
 }
 
@@ -382,6 +419,44 @@ describe("email functions", () => {
     expect(await as.query(api.email.recentInboundEmails)).toHaveLength(1);
   });
 
+  it("after an email change, attributes forwards from the new address only", async () => {
+    const t = initTest();
+    const { userId, as } = await signedInUser(t, "before@example.com");
+    await importKnownLink(t, userId);
+
+    const started = await fromBrowser(as).mutation(api.auth.startChangeEmail, {
+      newEmail: "after@example.com",
+      currentPassword: TEST_PASSWORD,
+    });
+    if (!started.success) throw new Error(JSON.stringify(started.userError));
+    expect(
+      await fromBrowser(as).mutation(api.auth.completeChangeEmail, {
+        emailCode: await emailedCode(t, "after@example.com"),
+        browserSecret: started.browserSecret,
+      }),
+    ).toEqual({ success: true });
+
+    expect((await t.run(async (ctx) => ctx.db.get(userId)))?.email).toBe("after@example.com");
+    expect(await forwardKnownLink(t, "before@example.com", "old-address-event")).toEqual([]);
+    expect(await forwardKnownLink(t, "after@example.com", "new-address-event")).toEqual([userId]);
+  });
+
+  it("attributes to the one verified owner when several users rows share an email", async () => {
+    const t = initTest();
+    const { userId } = await signedInUser(t, "shared@example.com");
+    // For example a v1 row of the same person, who signed up again on 2.0.
+    await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        email: "shared@example.com",
+        emailVerificationTime: Date.now(),
+        createdAt: Date.now(),
+      }),
+    );
+    await importKnownLink(t, userId);
+
+    expect(await forwardKnownLink(t, "shared@example.com", "shared-event")).toEqual([userId]);
+  });
+
   it("reimports an emailed URL when its previous recipe was deleted", async () => {
     const t = initTest();
     const userId = await createUser(t, "DeletedEmailRecipe");
@@ -653,6 +728,32 @@ describe("Convex Auth accounts", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("deleteUnverifiedUsers keeps legacy rows and rows being deleted", async () => {
+    const t = initTest();
+    const longAgo = Date.now() - 400 * 24 * 60 * 60 * 1000;
+    const { legacy, deleting } = await t.run(async (ctx) => ({
+      // A verified Convex Auth v1 row, as it was written before the move.
+      legacy: await ctx.db.insert("users", {
+        name: "Legacy",
+        email: "legacy@example.com",
+        emailVerificationTime: longAgo,
+        createdAt: longAgo,
+      }),
+      deleting: await ctx.db.insert("users", {
+        createdAt: longAgo,
+        deletionRequestedAt: Date.now(),
+        deletionStage: "savedRecipes",
+      }),
+    }));
+
+    await t.mutation(internal.users.deleteUnverifiedUsers, {});
+
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(legacy)).not.toBeNull();
+      expect(await ctx.db.get(deleting)).not.toBeNull();
+    });
   });
 
   it("account deletion revokes sessions and removes verified emails", async () => {

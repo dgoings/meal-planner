@@ -31,7 +31,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "html"],
       include: ["components/**/*.tsx", "convex/**/*.ts", "lib/**/*.ts"],
-      exclude: ["convex/_generated/**", "convex/seed.ts"],
+      exclude: ["convex/_generated/**", "convex/seed.ts", "convex/testing.helpers.ts"],
       thresholds: {
         // Vitest 5/V8 counts JSX and generated function branches more
         // precisely than Vitest 3. Keep each floor just below the audited

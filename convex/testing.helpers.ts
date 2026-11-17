@@ -41,8 +41,11 @@ export function initAuthTest() {
   return t;
 }
 
-/** The accessor for calls that come from a browser, which carry a client IP. */
-export function fromBrowser(t: AuthTest) {
+/**
+ * The accessor for calls that come from a browser, which carry a client IP.
+ * Pass `t`, or a signed-in accessor to keep its session.
+ */
+export function fromBrowser<T extends Pick<AuthTest, "withRequestMetadata">>(t: T) {
   return t.withRequestMetadata({ ip: TEST_CLIENT_IP });
 }
 
