@@ -1,30 +1,54 @@
-import { convexTest } from "convex-test";
 import { Blob as NodeBlob } from "node:buffer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, internal } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { queueRecipeSource } from "./recipeIngestion";
-import schema from "./schema";
+import {
+  emailedCode,
+  fromBrowser,
+  initAuthTest,
+  signedInUser,
+  signUp,
+  TEST_PASSWORD,
+  type AuthTest,
+} from "./testing.helpers";
 
-const modules = import.meta.glob("./**/*.*s");
+const initTest = initAuthTest;
 
-function initTest() {
-  return convexTest(schema, modules);
-}
-
-async function createUser(t: ReturnType<typeof convexTest>, name: string) {
+/** A user row for tests that only need a user id, with no session. */
+async function createUser(t: AuthTest, name: string) {
   return await t.run(async (ctx) =>
     ctx.db.insert("users", {
       name,
       email: `${name.toLowerCase()}@example.com`,
-      emailVerificationTime: Date.now(),
       createdAt: Date.now(),
     }),
   );
 }
 
+const sessions = new WeakMap<AuthTest, Map<Id<"users">, ReturnType<AuthTest["withIdentity"]>>>();
+
+/**
+ * A user who signed up and confirmed their email through Convex Auth, for
+ * tests that call functions as them (see `sessionOf`).
+ */
+async function createSignedInUser(t: AuthTest, name: string) {
+  const { userId, as } = await signedInUser(t, `${name.toLowerCase()}@example.com`);
+  await t.run(async (ctx) => ctx.db.patch(userId, { name }));
+  if (!sessions.has(t)) sessions.set(t, new Map());
+  sessions.get(t)!.set(userId, as);
+  return userId;
+}
+
+/** Calls functions with the session of a user from `createSignedInUser`. */
+function sessionOf(t: AuthTest, userId: Id<"users">) {
+  const as = sessions.get(t)?.get(userId);
+  if (as === undefined) throw new Error("Create the user with createSignedInUser to call as them");
+  return as;
+}
+
 async function createRecipe(
-  t: ReturnType<typeof convexTest>,
+  t: AuthTest,
   title: string,
   options: { isPublic?: boolean; requestedBy?: Id<"users"> } = {},
 ) {
@@ -57,6 +81,40 @@ async function createRecipe(
   });
 }
 
+/**
+ * Forwards a link the user already imported, so the forward is recorded
+ * without starting a workflow. Returns the users the forward was attributed to.
+ */
+async function forwardKnownLink(t: AuthTest, from: string, eventId: string) {
+  await t.mutation(internal.email.onMessageReceived, {
+    eventId,
+    thread: {},
+    message: { inbox_id: "inbox-1", from, text: "https://example.com/known-recipe" },
+  });
+  return await t.run(async (ctx) =>
+    (await ctx.db.query("inboundRecipeEmails").collect())
+      .filter((email) => email.eventId === eventId)
+      .map((email) => email.userId),
+  );
+}
+
+async function importKnownLink(t: AuthTest, userId: Id<"users">) {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("recipeImports", {
+      requestedBy: userId,
+      sourceUrl: "https://example.com/known-recipe",
+      normalizedUrl: "https://example.com/known-recipe",
+      sourceKind: "email",
+      workflowId: "existing-workflow",
+      status: "queued",
+      attemptCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+}
+
 describe("email functions", () => {
   const configuredInbox = process.env.AGENTMAIL_INBOX_ID;
 
@@ -75,8 +133,8 @@ describe("email functions", () => {
       t.mutation(api.email.queueUrl, { sourceUrl: "https://example.com/recipe" }),
     ).rejects.toThrow(/Unauthenticated/);
 
-    const userId = await createUser(t, "Ada");
-    const asAda = t.withIdentity({ subject: userId });
+    const userId = await createSignedInUser(t, "Ada");
+    const asAda = sessionOf(t, userId);
     const first = await t.run(async (ctx) => {
       const now = Date.now();
       return await ctx.db.insert("recipeImports", {
@@ -107,7 +165,7 @@ describe("email functions", () => {
 
   it("ignores duplicate links and unknown AgentMail inboxes", async () => {
     const t = initTest();
-    const userId = await createUser(t, "Lin");
+    const userId = await createSignedInUser(t, "Lin");
     await t.run(async (ctx) => {
       const now = Date.now();
       await ctx.db.insert("userInboxes", {
@@ -164,7 +222,7 @@ describe("email functions", () => {
     });
     expect(unknownInbox).toEqual({ queued: 0 });
 
-    const recentEmails = await t.withIdentity({ subject: userId }).query(
+    const recentEmails = await sessionOf(t, userId).query(
       api.email.recentInboundEmails,
     );
     expect(recentEmails).toHaveLength(2);
@@ -177,7 +235,7 @@ describe("email functions", () => {
 
   it("marks a legacy email without an explicit recipe import as failed", async () => {
     const t = initTest();
-    const userId = await createUser(t, "LegacyEmail");
+    const userId = await createSignedInUser(t, "LegacyEmail");
     await t.run(async (ctx) => {
       const now = Date.now();
       await ctx.db.insert("recipeImports", {
@@ -201,7 +259,7 @@ describe("email functions", () => {
       });
     });
 
-    const [email] = await t.withIdentity({ subject: userId }).query(
+    const [email] = await sessionOf(t, userId).query(
       api.email.recentInboundEmails,
     );
     expect(email.status).toBe("failed");
@@ -210,7 +268,7 @@ describe("email functions", () => {
 
   it("does not retry a URL by email after extraction found no recipe in Discover", async () => {
     const t = initTest();
-    const userId = await createUser(t, "FailedDiscoverUrl");
+    const userId = await createSignedInUser(t, "FailedDiscoverUrl");
     const importId = await t.run(async (ctx) => {
       const now = Date.now();
       return await ctx.db.insert("recipeImports", {
@@ -243,7 +301,7 @@ describe("email functions", () => {
       workflowId: "failed-workflow",
       attemptCount: 1,
     });
-    const [email] = await t.withIdentity({ subject: userId }).query(
+    const [email] = await sessionOf(t, userId).query(
       api.email.recentInboundEmails,
     );
     expect(email.status).toBe("failed");
@@ -252,7 +310,7 @@ describe("email functions", () => {
 
   it("retries a failed scrape on resubmission until the attempt limit", async () => {
     const t = initTest();
-    const userId = await createUser(t, "RetryCook");
+    const userId = await createSignedInUser(t, "RetryCook");
     const importId = await t.run(async (ctx) => {
       const now = Date.now();
       return await ctx.db.insert("recipeImports", {
@@ -296,37 +354,107 @@ describe("email functions", () => {
     expect(exhausted).toEqual({ importId, queued: false });
     expect(start).toHaveBeenCalledTimes(1);
 
-    const asOwner = t.withIdentity({ subject: userId });
+    const asOwner = sessionOf(t, userId);
     await expect(
       asOwner.mutation(api.recipeIngestion.retryImport, { importId }),
     ).rejects.toThrow(/too many times/);
-    const strangerId = await createUser(t, "RetryStranger");
+    const strangerId = await createSignedInUser(t, "RetryStranger");
     await expect(
-      t.withIdentity({ subject: strangerId }).mutation(api.recipeIngestion.retryImport, { importId }),
+      sessionOf(t, strangerId).mutation(api.recipeIngestion.retryImport, { importId }),
     ).rejects.toThrow(/not found/);
     await expect(
       t.mutation(api.recipeIngestion.retryImport, { importId }),
     ).rejects.toThrow(/Unauthenticated/);
   });
 
-  it("ignores forwards from an account whose email is not verified", async () => {
+  it("forwarded mail from an unconfirmed address is not attributed", async () => {
     const t = initTest();
-    const userId = await t.run(async (ctx) =>
-      ctx.db.insert("users", { name: "Unverified", email: "unverified@example.com", createdAt: Date.now() }),
-    );
+    await signUp(t, "unconfirmed@example.com");
 
     expect(await t.mutation(internal.email.onMessageReceived, {
-      eventId: "unverified-forward-event",
+      eventId: "unconfirmed-forward-event",
       thread: {},
       message: {
         inbox_id: "inbox-1",
-        from: "unverified@example.com",
+        from: "Unconfirmed <unconfirmed@example.com>",
         text: "https://example.com/some-recipe",
       },
     })).toEqual({ queued: 0 });
+    expect(await t.run(async (ctx) => ctx.db.query("inboundRecipeEmails").collect())).toEqual([]);
+  });
+
+  it("forwarded mail from a confirmed address is attributed", async () => {
+    const t = initTest();
+    const { userId, as } = await signedInUser(t, "Confirmed@Example.com");
+    // An existing import of the link keeps the forward from starting a
+    // workflow, so the test only observes the attribution.
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("recipeImports", {
+        requestedBy: userId,
+        sourceUrl: "https://example.com/confirmed-recipe",
+        normalizedUrl: "https://example.com/confirmed-recipe",
+        sourceKind: "email",
+        workflowId: "existing-workflow",
+        status: "queued",
+        attemptCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    await t.mutation(internal.email.onMessageReceived, {
+      eventId: "confirmed-forward-event",
+      thread: {},
+      message: {
+        inbox_id: "inbox-1",
+        from: "Confirmed <confirmed@example.com>",
+        text: "https://example.com/confirmed-recipe",
+      },
+    });
+
+    const inbound = await t.run(async (ctx) => ctx.db.query("inboundRecipeEmails").collect());
+    expect(inbound).toHaveLength(1);
+    expect(inbound[0].userId).toBe(userId);
+    expect(await as.query(api.email.recentInboundEmails)).toHaveLength(1);
+  });
+
+  it("after an email change, attributes forwards from the new address only", async () => {
+    const t = initTest();
+    const { userId, as } = await signedInUser(t, "before@example.com");
+    await importKnownLink(t, userId);
+
+    const started = await fromBrowser(as).mutation(api.auth.startChangeEmail, {
+      newEmail: "after@example.com",
+      currentPassword: TEST_PASSWORD,
+    });
+    if (!started.success) throw new Error(JSON.stringify(started.userError));
     expect(
-      await t.withIdentity({ subject: userId }).query(api.email.recentInboundEmails),
-    ).toEqual([]);
+      await fromBrowser(as).mutation(api.auth.completeChangeEmail, {
+        emailCode: await emailedCode(t, "after@example.com"),
+        browserSecret: started.browserSecret,
+      }),
+    ).toEqual({ success: true });
+
+    expect((await t.run(async (ctx) => ctx.db.get(userId)))?.email).toBe("after@example.com");
+    expect(await forwardKnownLink(t, "before@example.com", "old-address-event")).toEqual([]);
+    expect(await forwardKnownLink(t, "after@example.com", "new-address-event")).toEqual([userId]);
+  });
+
+  it("attributes to the one verified owner when several users rows share an email", async () => {
+    const t = initTest();
+    const { userId } = await signedInUser(t, "shared@example.com");
+    // For example a v1 row of the same person, who signed up again on 2.0.
+    await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        email: "shared@example.com",
+        emailVerificationTime: Date.now(),
+        createdAt: Date.now(),
+      }),
+    );
+    await importKnownLink(t, userId);
+
+    expect(await forwardKnownLink(t, "shared@example.com", "shared-event")).toEqual([userId]);
   });
 
   it("reimports an emailed URL when its previous recipe was deleted", async () => {
@@ -399,7 +527,7 @@ describe("email functions", () => {
 
   it("does not expose a deleted recipe through an older email record", async () => {
     const t = initTest();
-    const userId = await createUser(t, "DeletedEmailPreview");
+    const userId = await createSignedInUser(t, "DeletedEmailPreview");
     await t.run(async (ctx) => {
       const now = Date.now();
       const importId = await ctx.db.insert("recipeImports", {
@@ -439,7 +567,7 @@ describe("email functions", () => {
       });
     });
 
-    const [email] = await t.withIdentity({ subject: userId }).query(
+    const [email] = await sessionOf(t, userId).query(
       api.email.recentInboundEmails,
     );
     expect(email.status).toBe("already_imported");
@@ -491,8 +619,8 @@ describe("user settings", () => {
       /Unauthenticated/,
     );
 
-    const userId = await createUser(t, "Original");
-    const asUser = t.withIdentity({ subject: userId });
+    const userId = await createSignedInUser(t, "Original");
+    const asUser = sessionOf(t, userId);
     await asUser.mutation(api.users.updateProfile, { name: "  Ada Byron  " });
     expect(await asUser.query(api.users.current)).toMatchObject({
       name: "Ada Byron",
@@ -502,15 +630,15 @@ describe("user settings", () => {
 
   it("rejects blank profile names", async () => {
     const t = initTest();
-    const userId = await createUser(t, "Original");
+    const userId = await createSignedInUser(t, "Original");
     await expect(
-      t.withIdentity({ subject: userId }).mutation(api.users.updateProfile, { name: "   " }),
+      sessionOf(t, userId).mutation(api.users.updateProfile, { name: "   " }),
     ).rejects.toThrow(/Name is required/);
   });
 
   it("deletes account-owned data and disconnects retained recipe imports", async () => {
     const t = initTest();
-    const userId = await createUser(t, "DeleteMe");
+    const userId = await createSignedInUser(t, "DeleteMe");
     const recipeId = await createRecipe(t, "account-recipe", { requestedBy: userId });
     const records = await t.run(async (ctx) => {
       const now = Date.now();
@@ -535,24 +663,11 @@ describe("user settings", () => {
         createdAt: now,
         updatedAt: now,
       });
-      const accountId = await ctx.db.insert("authAccounts", {
-        userId,
-        provider: "password",
-        providerAccountId: "delete-me@example.com",
-      });
-      const sessionId = await ctx.db.insert("authSessions", {
-        userId,
-        expirationTime: now + 60_000,
-      });
-      const refreshTokenId = await ctx.db.insert("authRefreshTokens", {
-        sessionId,
-        expirationTime: now + 60_000,
-      });
-      return { savedRecipeId, groceryListId, inboxId, accountId, sessionId, refreshTokenId };
+      return { savedRecipeId, groceryListId, inboxId };
     });
 
     vi.useFakeTimers();
-    await t.withIdentity({ subject: userId }).mutation(api.users.deleteAccount, { confirmation: "DELETE" });
+    await sessionOf(t, userId).mutation(api.users.deleteAccount, { confirmation: "DELETE" });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     vi.useRealTimers();
 
@@ -566,38 +681,105 @@ describe("user settings", () => {
   });
 });
 
-describe("email verification migration", () => {
-  it("confirms accounts created before the cutoff and leaves newer ones alone", async () => {
+describe("Convex Auth accounts", () => {
+  it("sign-up then validation yields a user whose email is set", async () => {
     const t = initTest();
-    const { oldId, newId, oldAccountId, newAccountId } = await t.run(async (ctx) => {
-      const oldId = await ctx.db.insert("users", { name: "Old", email: "old@example.com" });
-      const newId = await ctx.db.insert("users", { name: "New", email: "new@example.com" });
-      const oldAccountId = await ctx.db.insert("authAccounts", { userId: oldId, provider: "password", providerAccountId: "old@example.com" });
-      const newAccountId = await ctx.db.insert("authAccounts", { userId: newId, provider: "password", providerAccountId: "new@example.com" });
-      return { oldId, newId, oldAccountId, newAccountId };
-    });
-    const cutoff = await t.run(async (ctx) => (await ctx.db.get(newId))!._creationTime);
+    const { userId, as } = await signedInUser(t, "Ana@Example.com");
 
-    expect(
-      await t.mutation(internal.migrations.grandfatherEmailVerification, { createdBefore: cutoff }),
-    ).toEqual({ users: 1, accounts: 1, done: true });
-    expect(
-      await t.mutation(internal.migrations.grandfatherEmailVerification, { createdBefore: cutoff }),
-    ).toEqual({ users: 0, accounts: 0, done: true });
+    const user = await t.run(async (ctx) => ctx.db.get(userId));
+    expect(user?.email).toBe("ana@example.com");
+    expect(await as.query(api.users.current)).toMatchObject({
+      _id: userId,
+      email: "ana@example.com",
+    });
+  });
+
+  it("sign-up alone leaves the user without an email", async () => {
+    const t = initTest();
+    await signUp(t, "pending@example.com");
+
+    const users = await t.run(async (ctx) => ctx.db.query("users").collect());
+    expect(users).toHaveLength(1);
+    expect(users[0].email).toBeUndefined();
+  });
+
+  it("deleteUnverifiedUsers removes only stale rows without an email", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = initTest();
+      const hour = 60 * 60 * 1000;
+      const now = Date.now();
+      const { stale, recent, verified } = await t.run(async (ctx) => ({
+        stale: await ctx.db.insert("users", { createdAt: now - 25 * hour }),
+        recent: await ctx.db.insert("users", { createdAt: now - hour }),
+        verified: await ctx.db.insert("users", {
+          email: "kept@example.com",
+          createdAt: now - 25 * hour,
+        }),
+      }));
+
+      await t.mutation(internal.users.deleteUnverifiedUsers, {});
+
+      await t.run(async (ctx) => {
+        expect(await ctx.db.get(stale)).toBeNull();
+        expect(await ctx.db.get(recent)).not.toBeNull();
+        expect(await ctx.db.get(verified)).not.toBeNull();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("deleteUnverifiedUsers keeps legacy rows and rows being deleted", async () => {
+    const t = initTest();
+    const longAgo = Date.now() - 400 * 24 * 60 * 60 * 1000;
+    const { legacy, deleting } = await t.run(async (ctx) => ({
+      // A verified Convex Auth v1 row, as it was written before the move.
+      legacy: await ctx.db.insert("users", {
+        name: "Legacy",
+        email: "legacy@example.com",
+        emailVerificationTime: longAgo,
+        createdAt: longAgo,
+      }),
+      deleting: await ctx.db.insert("users", {
+        createdAt: longAgo,
+        deletionRequestedAt: Date.now(),
+        deletionStage: "savedRecipes",
+      }),
+    }));
+
+    await t.mutation(internal.users.deleteUnverifiedUsers, {});
 
     await t.run(async (ctx) => {
-      expect((await ctx.db.get(oldId))?.emailVerificationTime).toBeTypeOf("number");
-      expect((await ctx.db.get(oldAccountId))?.emailVerified).toBe("old@example.com");
-      expect((await ctx.db.get(newId))?.emailVerificationTime).toBeUndefined();
-      expect((await ctx.db.get(newAccountId))?.emailVerified).toBeUndefined();
+      expect(await ctx.db.get(legacy)).not.toBeNull();
+      expect(await ctx.db.get(deleting)).not.toBeNull();
     });
+  });
+
+  it("account deletion revokes sessions and removes verified emails", async () => {
+    const t = initTest();
+    const { userId, as } = await signedInUser(t, "leaving@example.com");
+    expect(await as.query(api.auth.isAuthenticated)).toBe(true);
+
+    vi.useFakeTimers();
+    await as.mutation(api.users.deleteAccount, { confirmation: "DELETE" });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+
+    expect(await as.query(api.auth.isAuthenticated)).toBe(false);
+    expect(
+      await t.run(async (ctx) =>
+        ctx.runQuery(components.authEmail.verifiedEmails.getEmails, { userId }),
+      ),
+    ).toEqual([]);
+    expect(await t.run(async (ctx) => ctx.db.get(userId))).toBeNull();
   });
 });
 
 describe("recipe authorization", () => {
   it("keeps previews out of the Recipe Book until the user saves them", async () => {
     const t = initTest();
-    const adaId = await createUser(t, "Ada");
+    const adaId = await createSignedInUser(t, "Ada");
     const graceId = await createUser(t, "Grace");
     const publicId = await createRecipe(t, "public", { isPublic: true });
     const adaPrivateId = await createRecipe(t, "ada-private", { requestedBy: adaId });
@@ -616,7 +798,7 @@ describe("recipe authorization", () => {
       });
     });
 
-    const asAda = t.withIdentity({ subject: adaId });
+    const asAda = sessionOf(t, adaId);
     const visible = await asAda.query(api.recipes.listBook);
     expect(visible.map((recipe) => recipe._id)).toEqual([sharedId]);
     expect(await asAda.query(api.recipes.get, { recipeId: publicId })).toMatchObject({
@@ -650,10 +832,10 @@ describe("recipe authorization", () => {
 
   it("limits notes and favorites to saved recipes and editing to the owner", async () => {
     const t = initTest();
-    const adaId = await createUser(t, "Ada");
+    const adaId = await createSignedInUser(t, "Ada");
     const publicId = await createRecipe(t, "public", { isPublic: true });
     const ownId = await createRecipe(t, "own", { requestedBy: adaId });
-    const asAda = t.withIdentity({ subject: adaId });
+    const asAda = sessionOf(t, adaId);
 
     expect(await asAda.query(api.recipes.get, { recipeId: publicId })).toMatchObject({
       canEdit: false,
@@ -696,8 +878,8 @@ describe("recipe authorization", () => {
 describe("manual recipes", () => {
   it("creates an editable recipe and explicitly adds it to the Recipe Book", async () => {
     const t = initTest();
-    const userId = await createUser(t, "ManualCook");
-    const asUser = t.withIdentity({ subject: userId });
+    const userId = await createSignedInUser(t, "ManualCook");
+    const asUser = sessionOf(t, userId);
     const recipeId = await asUser.mutation(api.recipeCards.createManual, {
       title: "Family pancakes",
       description: "The Sunday version.",
@@ -837,7 +1019,7 @@ describe("recipe scrape persistence", () => {
 describe("agent-generated recipe persistence", () => {
   it("creates a recipe first and adds required ingredients only on request", async () => {
     const t = initTest();
-    const userId = await createUser(t, "Mina");
+    const userId = await createSignedInUser(t, "Mina");
     const importId = await t.run(async (ctx) => {
       const now = Date.now();
       const id = await ctx.db.insert("recipeImports", {
@@ -945,7 +1127,7 @@ describe("agent-generated recipe persistence", () => {
       expect(saved).toBeNull();
     });
 
-    const asUser = t.withIdentity({ subject: userId });
+    const asUser = sessionOf(t, userId);
     await asUser.mutation(api.recipeCards.addToBook, { recipeId: first.recipeId });
     await asUser.mutation(api.recipeCards.addToBook, { recipeId: first.recipeId });
     await t.run(async (ctx) => {
@@ -992,11 +1174,11 @@ describe("agent-generated recipe persistence", () => {
 describe("editable recipe cards", () => {
   it("lets only the owner edit fields, ingredients, notes, and removal state", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "Owner");
-    const otherId = await createUser(t, "Other");
+    const ownerId = await createSignedInUser(t, "Owner");
+    const otherId = await createSignedInUser(t, "Other");
     const recipeId = await createRecipe(t, "editable", { requestedBy: ownerId });
-    const asOwner = t.withIdentity({ subject: ownerId });
-    const asOther = t.withIdentity({ subject: otherId });
+    const asOwner = sessionOf(t, ownerId);
+    const asOther = sessionOf(t, otherId);
 
     await expect(
       asOther.mutation(api.recipeCards.updateCard, {
@@ -1048,8 +1230,8 @@ describe("editable recipe cards", () => {
 
   it("shows import review details to the owner and acknowledges review", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "ReviewOwner");
-    const otherId = await createUser(t, "ReviewVisitor");
+    const ownerId = await createSignedInUser(t, "ReviewOwner");
+    const otherId = await createSignedInUser(t, "ReviewVisitor");
     const recipeId = await createRecipe(t, "reviewable", {
       requestedBy: ownerId,
     });
@@ -1063,8 +1245,8 @@ describe("editable recipe cards", () => {
       });
       return recipe.importId;
     });
-    const asOwner = t.withIdentity({ subject: ownerId });
-    const asOther = t.withIdentity({ subject: otherId });
+    const asOwner = sessionOf(t, ownerId);
+    const asOther = sessionOf(t, otherId);
 
     expect(await asOwner.query(api.recipes.get, { recipeId })).toMatchObject({
       importReview: {
@@ -1092,11 +1274,11 @@ describe("editable recipe cards", () => {
 describe("recipe tags and photos", () => {
   it("normalizes tags and lets only the owner add a first photo", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "TagOwner");
-    const otherId = await createUser(t, "TagOther");
+    const ownerId = await createSignedInUser(t, "TagOwner");
+    const otherId = await createSignedInUser(t, "TagOther");
     const recipeId = await createRecipe(t, "taggable", { requestedBy: ownerId });
-    const asOwner = t.withIdentity({ subject: ownerId });
-    const asOther = t.withIdentity({ subject: otherId });
+    const asOwner = sessionOf(t, ownerId);
+    const asOther = sessionOf(t, otherId);
 
     await asOwner.mutation(api.recipeCards.updateCard, {
       recipeId,
@@ -1148,10 +1330,10 @@ describe("recipe tags and photos", () => {
 describe("editable grocery lists", () => {
   it("supports owned list and item creation, editing, and independent deletion", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "Shopper");
-    const otherId = await createUser(t, "Visitor");
-    const asOwner = t.withIdentity({ subject: ownerId });
-    const asOther = t.withIdentity({ subject: otherId });
+    const ownerId = await createSignedInUser(t, "Shopper");
+    const otherId = await createSignedInUser(t, "Visitor");
+    const asOwner = sessionOf(t, ownerId);
+    const asOther = sessionOf(t, otherId);
 
     const listId = await asOwner.mutation(api.groceryLists.create, {
       name: "Weekend",
@@ -1193,11 +1375,11 @@ describe("editable grocery lists", () => {
 describe("recipe card validation branches", () => {
   it("supports clearing optional fields and updating existing notes and ingredients", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "Editor");
+    const ownerId = await createSignedInUser(t, "Editor");
     const recipeId = await createRecipe(t, "branch-recipe", {
       requestedBy: ownerId,
     });
-    const asOwner = t.withIdentity({ subject: ownerId });
+    const asOwner = sessionOf(t, ownerId);
 
     await expect(
       t.mutation(api.recipeCards.updateCard, { recipeId, title: "No session" }),
@@ -1316,8 +1498,8 @@ describe("recipe card validation branches", () => {
 
   it("rejects non-editable recipes and enforces the ingredient limit", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "LimitCook");
-    const asOwner = t.withIdentity({ subject: ownerId });
+    const ownerId = await createSignedInUser(t, "LimitCook");
+    const asOwner = sessionOf(t, ownerId);
     const standaloneRecipeId = await t.run(async (ctx) => {
       const now = Date.now();
       return await ctx.db.insert("recipes", {
@@ -1374,8 +1556,8 @@ describe("recipe card validation branches", () => {
 describe("grocery list validation branches", () => {
   it("adds recipe ingredients to an existing list without duplicating the recipe", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "ExistingListCook");
-    const asOwner = t.withIdentity({ subject: ownerId });
+    const ownerId = await createSignedInUser(t, "ExistingListCook");
+    const asOwner = sessionOf(t, ownerId);
     const recipeId = await createRecipe(t, "pancakes", { requestedBy: ownerId });
     const unrelatedRecipeId = await createRecipe(t, "omelet", { requestedBy: ownerId });
     const listId = await asOwner.mutation(api.groceryLists.create, { name: "Weekend" });
@@ -1426,8 +1608,8 @@ describe("grocery list validation branches", () => {
 
   it("scales amounts for the chosen servings and files items by store section", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "ScalingCook");
-    const asOwner = t.withIdentity({ subject: ownerId });
+    const ownerId = await createSignedInUser(t, "ScalingCook");
+    const asOwner = sessionOf(t, ownerId);
     const recipeId = await createRecipe(t, "scaled-soup", { requestedBy: ownerId });
     await t.run(async (ctx) => {
       const now = Date.now();
@@ -1453,8 +1635,8 @@ describe("grocery list validation branches", () => {
 
   it("keeps items the saving client never loaded and deletes explicit removals", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "StaleEditorCook");
-    const asOwner = t.withIdentity({ subject: ownerId });
+    const ownerId = await createSignedInUser(t, "StaleEditorCook");
+    const asOwner = sessionOf(t, ownerId);
     const listId = await asOwner.mutation(api.groceryLists.create, { name: "Shared trip" });
     const milkId = await asOwner.mutation(api.groceryLists.addItem, { listId, name: "Milk" });
     const breadId = await asOwner.mutation(api.groceryLists.addItem, { listId, name: "Bread" });
@@ -1476,10 +1658,10 @@ describe("grocery list validation branches", () => {
 
   it("adds an imported recipe that is not in the Recipe Book to an existing list", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "UnsavedImportCook");
-    const otherId = await createUser(t, "OtherListCook");
-    const asOwner = t.withIdentity({ subject: ownerId });
-    const asOther = t.withIdentity({ subject: otherId });
+    const ownerId = await createSignedInUser(t, "UnsavedImportCook");
+    const otherId = await createSignedInUser(t, "OtherListCook");
+    const asOwner = sessionOf(t, ownerId);
+    const asOther = sessionOf(t, otherId);
     const recipeId = await createRecipe(t, "lemon-cookies", { requestedBy: ownerId });
     await t.run(async (ctx) => {
       await ctx.db.insert("recipeIngredients", { recipeId, position: 1, originalText: "2 lemons", name: "Lemons", normalizedName: "lemons", quantity: 2, isOptional: false });
@@ -1500,10 +1682,10 @@ describe("grocery list validation branches", () => {
 
   it("creates a renamed idempotent merged list and removes both originals", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "ListCombiner");
-    const otherId = await createUser(t, "OtherCombiner");
-    const asOwner = t.withIdentity({ subject: ownerId });
-    const asOther = t.withIdentity({ subject: otherId });
+    const ownerId = await createSignedInUser(t, "ListCombiner");
+    const otherId = await createSignedInUser(t, "OtherCombiner");
+    const asOwner = sessionOf(t, ownerId);
+    const asOther = sessionOf(t, otherId);
     const firstListId = await asOwner.mutation(api.groceryLists.create, {
       name: "Dinner",
     });
@@ -1576,10 +1758,10 @@ describe("grocery list validation branches", () => {
 
   it("atomically saves new and existing editable lists", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "ListSaver");
-    const otherId = await createUser(t, "OtherSaver");
-    const asOwner = t.withIdentity({ subject: ownerId });
-    const asOther = t.withIdentity({ subject: otherId });
+    const ownerId = await createSignedInUser(t, "ListSaver");
+    const otherId = await createSignedInUser(t, "OtherSaver");
+    const asOwner = sessionOf(t, ownerId);
+    const asOther = sessionOf(t, otherId);
     const requestId = "request-save-list-123";
 
     const listId = await asOwner.mutation(api.groceryLists.save, {
@@ -1668,10 +1850,10 @@ describe("grocery list validation branches", () => {
 
   it("covers anonymous access, nullable edits, item deletion, and validation", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "ListEditor");
-    const otherId = await createUser(t, "ListViewer");
-    const asOwner = t.withIdentity({ subject: ownerId });
-    const asOther = t.withIdentity({ subject: otherId });
+    const ownerId = await createSignedInUser(t, "ListEditor");
+    const otherId = await createSignedInUser(t, "ListViewer");
+    const asOwner = sessionOf(t, ownerId);
+    const asOther = sessionOf(t, otherId);
 
     await expect(t.query(api.groceryLists.listMine)).rejects.toThrow(
       /Unauthenticated/,
@@ -1775,8 +1957,8 @@ describe("grocery list validation branches", () => {
 
   it("cleans generated-list provenance and enforces the item limit", async () => {
     const t = initTest();
-    const ownerId = await createUser(t, "BulkShopper");
-    const asOwner = t.withIdentity({ subject: ownerId });
+    const ownerId = await createSignedInUser(t, "BulkShopper");
+    const asOwner = sessionOf(t, ownerId);
     const recipeId = await createRecipe(t, "list-source", {
       requestedBy: ownerId,
     });

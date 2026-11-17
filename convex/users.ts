@@ -1,7 +1,83 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { components, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+
+const UNVERIFIED_USER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const UNVERIFIED_USER_BATCH_SIZE = 100;
+
+const emailPasswordMethod = v.object({
+  name: v.literal("emailPassword"),
+  profile: v.object({}),
+});
+
+/**
+ * Convex Auth's `createUser` callback for email and password sign-up. The
+ * method passes no profile data, and the row is created before the emailed
+ * link is opened, so the user starts without an email (see `syncUserEmail`).
+ */
+export const createUserEmailPassword = internalMutation({
+  args: { method: emailPasswordMethod },
+  returns: v.id("users"),
+  handler: async (ctx) => {
+    return await ctx.db.insert("users", { createdAt: Date.now() });
+  },
+});
+
+/**
+ * Convex Auth's `onSignIn` callback. Copies the user's primary verified email
+ * from the auth email component, so `users.email` is set only for addresses
+ * whose owner opened the confirmation link.
+ */
+export const syncUserEmail = internalMutation({
+  args: { method: emailPasswordMethod, userId: v.id("users") },
+  returns: v.null(),
+  handler: async (ctx, { userId }) => {
+    await copyVerifiedEmail(ctx, userId);
+    return null;
+  },
+});
+
+/**
+ * Copies the user's primary verified email from the auth email component
+ * onto `users.email`. Runs at every sign-in and after an email change.
+ */
+export async function copyVerifiedEmail(ctx: MutationCtx, userId: Id<"users">) {
+  const user = await ctx.db.get(userId);
+  if (user === null) return;
+  const primaryEmail = await ctx.runQuery(components.authEmail.verifiedEmails.getPrimaryEmail, { userId });
+  // Forwarded mail is matched on the lowercased sender address.
+  const email = primaryEmail?.trim().toLowerCase();
+  if (email !== undefined && email !== user.email) {
+    await ctx.db.patch(userId, { email, updatedAt: Date.now() });
+  }
+}
+
+/**
+ * Deletes accounts whose confirmation link was never opened. Sign-up creates
+ * the user before the link is opened, and a new link means signing up again,
+ * so these rows can never sign in once their link has expired.
+ */
+export const deleteUnverifiedUsers = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const cutoff = Date.now() - UNVERIFIED_USER_MAX_AGE_MS;
+    // Oldest first, so the stale rows come before any recent sign-ups.
+    const candidates = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", undefined))
+      .take(UNVERIFIED_USER_BATCH_SIZE);
+    for (const user of candidates) {
+      const createdAt = user.createdAt ?? user._creationTime;
+      if (user.deletionStage === undefined && createdAt < cutoff) {
+        await ctx.db.delete(user._id);
+      }
+    }
+    return null;
+  },
+});
 
 /** Returns the signed-in user's profile, or null for an anonymous client. */
 export const current = query({
@@ -44,7 +120,7 @@ export const deleteAccount = mutation({
 
     await ctx.db.patch(userId, {
       deletionRequestedAt: Date.now(),
-      deletionStage: "authAccounts",
+      deletionStage: "auth",
       updatedAt: Date.now(),
     });
     await ctx.scheduler.runAfter(0, internal.users.continueAccountDeletion, { userId });
@@ -52,7 +128,7 @@ export const deleteAccount = mutation({
   },
 });
 
-type DeletionStage = "authAccounts" | "authSessions" | "savedRecipes" | "userInboxes" | "inboundEmails" | "recipeImports" | "groceryLists";
+type DeletionStage = "auth" | "savedRecipes" | "userInboxes" | "inboundEmails" | "recipeImports" | "groceryLists";
 
 export const continueAccountDeletion = internalMutation({
   args: { userId: v.id("users") },
@@ -68,32 +144,16 @@ export const continueAccountDeletion = internalMutation({
       await schedule();
     };
 
-    if (user.deletionStage === "authAccounts") {
-      const account = await ctx.db.query("authAccounts").withIndex("userIdAndProvider", (q) => q.eq("userId", userId)).first();
-      if (account === null) {
-        await advance("authSessions");
-        return null;
-      }
-      const codes = await ctx.db.query("authVerificationCodes").withIndex("accountId", (q) => q.eq("accountId", account._id)).take(50);
-      await Promise.all(codes.map((code) => ctx.db.delete(code._id)));
-      if (codes.length < 50) await ctx.db.delete(account._id);
-      await schedule();
-      return null;
-    }
-
-    if (user.deletionStage === "authSessions") {
-      const session = await ctx.db.query("authSessions").withIndex("userId", (q) => q.eq("userId", userId)).first();
-      if (session === null) {
-        await advance("savedRecipes");
-        return null;
-      }
-      const [tokens, verifiers] = await Promise.all([
-        ctx.db.query("authRefreshTokens").withIndex("sessionId", (q) => q.eq("sessionId", session._id)).take(50),
-        ctx.db.query("authVerifiers").filter((q) => q.eq(q.field("sessionId"), session._id)).take(50),
-      ]);
-      await Promise.all([...tokens.map((token) => ctx.db.delete(token._id)), ...verifiers.map((verifier) => ctx.db.delete(verifier._id))]);
-      if (tokens.length < 50 && verifiers.length < 50) await ctx.db.delete(session._id);
-      await schedule();
+    if (user.deletionStage === "auth") {
+      // Revoking the sessions signs the user out everywhere, and deleting the
+      // verified emails frees the address. The password component has no
+      // delete function; its hash is unreachable once the emails are gone.
+      const sessions = await ctx.runQuery(components.auth.public.listSessions, { userId });
+      await ctx.runMutation(components.auth.public.revokeSessions, {
+        sessionIds: sessions.map((session) => session.sessionId),
+      });
+      await ctx.runMutation(components.authEmail.verifiedEmails.deleteUser, { userId });
+      await advance("savedRecipes");
       return null;
     }
 

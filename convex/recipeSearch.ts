@@ -1,6 +1,5 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { ConvexError, v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { action, internalMutation, internalQuery } from "./_generated/server";
 import {
   MAX_SEARCH_QUERY_LENGTH,
@@ -110,8 +109,12 @@ export const search = action({
   args: { query: v.string() },
   returns: v.array(searchResult),
   handler: async (ctx, { query }): Promise<RecipeSearchResult[]> => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) throw new Error("Unauthenticated");
+    // Convex Auth 2.0's `getAuthUserId` is typed for query and mutation
+    // contexts, so this action asks the auth core whether the caller's
+    // session is live instead.
+    if (!(await ctx.runQuery(api.auth.isAuthenticated))) {
+      throw new Error("Unauthenticated");
+    }
 
     const normalizedQuery = normalizeSearchQuery(query);
     if (

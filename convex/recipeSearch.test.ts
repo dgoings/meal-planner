@@ -1,16 +1,11 @@
-import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
-import schema from "./schema";
-
-const modules = import.meta.glob("./**/*.*s");
+import { initAuthTest, signedInUser } from "./testing.helpers";
 
 async function signedIn() {
-  const t = convexTest(schema, modules);
-  const userId = await t.run(async (ctx) =>
-    ctx.db.insert("users", { name: "Ada", email: "ada@example.com" }),
-  );
-  return { t, asUser: t.withIdentity({ subject: userId }) };
+  const t = initAuthTest();
+  const { as } = await signedInUser(t, "ada@example.com");
+  return { t, asUser: as };
 }
 
 function tavilyResponse(results: unknown[], status = 200) {
