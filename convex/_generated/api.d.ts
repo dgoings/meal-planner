@@ -18,6 +18,7 @@ import type * as lib_groceryCategory from "../lib/groceryCategory.js";
 import type * as lib_manualIngredient from "../lib/manualIngredient.js";
 import type * as lib_publicDns from "../lib/publicDns.js";
 import type * as lib_recipeAgentTypes from "../lib/recipeAgentTypes.js";
+import type * as lib_recipeModel from "../lib/recipeModel.js";
 import type * as lib_recipeScrape from "../lib/recipeScrape.js";
 import type * as lib_recipeSearch from "../lib/recipeSearch.js";
 import type * as lib_urls from "../lib/urls.js";
@@ -51,6 +52,7 @@ declare const fullApi: ApiFromModules<{
   "lib/manualIngredient": typeof lib_manualIngredient;
   "lib/publicDns": typeof lib_publicDns;
   "lib/recipeAgentTypes": typeof lib_recipeAgentTypes;
+  "lib/recipeModel": typeof lib_recipeModel;
   "lib/recipeScrape": typeof lib_recipeScrape;
   "lib/recipeSearch": typeof lib_recipeSearch;
   "lib/urls": typeof lib_urls;
