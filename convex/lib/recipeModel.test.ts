@@ -70,6 +70,15 @@ describe("resolveRecipeModelConfig", () => {
     ).toThrow(/OPENAI_API_KEY/);
   });
 
+  it("requires RECIPE_AGENT_MODEL for a named non-Anthropic provider", () => {
+    expect(() =>
+      resolveRecipeModelConfig({
+        RECIPE_AGENT_PROVIDER: "openai",
+        OPENAI_API_KEY: "k",
+      }),
+    ).toThrow(/RECIPE_AGENT_MODEL/);
+  });
+
   it("rejects an unknown provider", () => {
     expect(() =>
       resolveRecipeModelConfig({
