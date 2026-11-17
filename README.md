@@ -8,8 +8,8 @@ recipe links directly, a language model (Anthropic, OpenAI, or OpenRouter)
 structures recipe cards, and AgentMail receives recipes forwarded to a shared
 inbox.
 
-The frontend can be hosted on Vercel or Render, and is currently hosted on
-Vercel at [perfectplate.vercel.app](https://perfectplate.vercel.app/); Convex
+The frontend can be hosted on Vercel or Render. This fork hosts it on Render,
+built from the `deploy` branch; the Vercel setup remains supported. Convex
 remains the production database and application backend. See
 [Deployment](#deployment).
 
@@ -343,8 +343,12 @@ frontend as a Node web service. It uses the same build as Vercel
 (`bunx convex deploy --cmd 'bun run build'`), so each deploy pushes the Convex
 functions first and builds with the production `NEXT_PUBLIC_CONVEX_URL`.
 
-1. In the Render dashboard, choose **New** → **Blueprint** and pick this
-   repository.
+On this fork, the Render service is created from the `deploy` branch, because
+`render.yaml` does not exist on `main`. Push `deploy` before creating the
+service.
+
+1. In the Render dashboard, choose **New** → **Blueprint**, pick this
+   repository, and select the `deploy` branch.
 2. When prompted for `CONVEX_DEPLOY_KEY`, paste a **production** deploy key
    from the Convex dashboard. Render asks for it only when the Blueprint is
    first created; change it later in the service's environment settings.
