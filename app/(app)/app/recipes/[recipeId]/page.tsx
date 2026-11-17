@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { convexAuthNextjsToken } from "@convex-dev/auth/nextjs/server";
 import { fetchQuery } from "convex/nextjs";
 import { ArrowLeft, Clock3, Users } from "lucide-react";
 import Link from "next/link";
@@ -10,6 +9,7 @@ import { RecipeIngredients } from "@/components/recipes/recipe-ingredients";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
+import { convexAuthNextjsAccessToken } from "@/lib/convex-auth";
 import { recipeArt } from "@/lib/data/recipe-view";
 
 export const metadata: Metadata = { title: "Recipe preview" };
@@ -20,8 +20,8 @@ export default async function RecipePreviewPage({
   params: Promise<{ recipeId: string }>;
 }) {
   const { recipeId } = await params;
-  const token = await convexAuthNextjsToken();
-  const data = await fetchQuery(api.recipes.get, { recipeId }, { token });
+  const token = await convexAuthNextjsAccessToken();
+  const data = await fetchQuery(api.recipes.get, { recipeId }, { token: token ?? undefined });
   if (data === null) notFound();
 
   const { recipe, ingredients, saved } = data;
