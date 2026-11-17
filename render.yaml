@@ -3,11 +3,14 @@ services:
     name: perfectplate
     runtime: node
     plan: free
-    buildCommand: npm ci && npx convex deploy --cmd 'npm run build'
-    startCommand: npm run start
+    branch: deploy
+    buildCommand: bun install --frozen-lockfile && bunx convex deploy --cmd 'bun run build'
+    startCommand: bun run start
     healthCheckPath: /
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: BUN_VERSION
+        value: "1.3.11"
       - key: CONVEX_DEPLOY_KEY
         sync: false
