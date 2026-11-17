@@ -264,8 +264,7 @@ Open the [AgentMail console](https://console.agentmail.to) and select the
 AgentMail account used by PerfectPlate. Create an API key, then select the
 shared PerfectPlate inbox. Copy its inbox ID, which is usually the inbox email
 address (`perfectplate@agentmail.to`). The inbox and API key must belong to the
-same AgentMail account; otherwise AgentMail returns `404 Inbox not found` when
-the application tries to send mail.
+same AgentMail account.
 
 Store both values directly on the Convex development deployment. Omit each
 value from the command so the CLI prompts for it without placing the secret in

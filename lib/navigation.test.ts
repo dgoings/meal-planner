@@ -12,7 +12,16 @@ describe("safeAppRedirect", () => {
     expect(safeAppRedirect(value)).toBe(expected);
   });
 
-  it.each(["//evil.example", "/application", "https://evil.example/app", "%2Fapp%2Fimports", "/confirm-email-change-x", "/validate-email?code=abc"])(
+  it.each([
+    "//evil.example",
+    "/\\evil.example",
+    "/application",
+    "https://evil.example/app",
+    "https://perfectplate.local//evil",
+    "%2Fapp%2Fimports",
+    "/confirm-email-change-x",
+    "/validate-email?code=abc",
+  ])(
     "rejects an unsafe redirect: %s",
     (value) => expect(safeAppRedirect(value)).toBe("/app"),
   );
