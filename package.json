@@ -32,6 +32,8 @@
   "dependencies": {
     "@agentmail/convex": "^0.1.0",
     "@ai-sdk/anthropic": "^4.0.65",
+    "@ai-sdk/openai": "^4.0.120",
+    "@ai-sdk/openai-compatible": "^3.0.93",
     "@ai-sdk/provider": "4.0.12",
     "@ai-sdk/provider-utils": "5.0.38",
     "@auth/core": "^0.41.3",
