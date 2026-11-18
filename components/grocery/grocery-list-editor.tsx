@@ -274,6 +274,7 @@ export function GroceryListEditor({
                     />
                     <Input
                       className="quantity-input"
+                      inputMode="decimal"
                       value={item.quantity}
                       onChange={(event) =>
                         updateItem(item.id, { quantity: event.target.value })
