@@ -13,6 +13,7 @@ import type * as crons from "../crons.js";
 import type * as email from "../email.js";
 import type * as groceryLists from "../groceryLists.js";
 import type * as http from "../http.js";
+import type * as legacyAccounts from "../legacyAccounts.js";
 import type * as lib_agentmail from "../lib/agentmail.js";
 import type * as lib_boundedFetch from "../lib/boundedFetch.js";
 import type * as lib_groceryCategory from "../lib/groceryCategory.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   email: typeof email;
   groceryLists: typeof groceryLists;
   http: typeof http;
+  legacyAccounts: typeof legacyAccounts;
   "lib/agentmail": typeof lib_agentmail;
   "lib/boundedFetch": typeof lib_boundedFetch;
   "lib/groceryCategory": typeof lib_groceryCategory;
