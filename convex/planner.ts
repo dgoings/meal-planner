@@ -157,13 +157,26 @@ async function importedRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">
   return { recipeImport, recipeId: saved === null ? undefined : recipeId };
 }
 
-/** The name a slot shows: its recipe's title or its planner meal's name. */
+/**
+ * A Cook slot's recipe. `usable` is false when the recipe was removed or its
+ * owner can no longer open it; the slot then behaves as unlinked: no name, so
+ * it is no leftovers source and retyping the title links a recipe again.
+ */
+async function cookRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
+  const imported = await importedRecipe(ctx, row);
+  const recipeId = row.type === "cook" ? (row.recipeId ?? imported?.recipeId) : undefined;
+  const recipe = recipeId === undefined ? null : await ctx.db.get(recipeId);
+  const usable =
+    recipe !== null && recipe.deletedAt === undefined && (await canAccessRecipe(ctx, row.updatedBy, recipe));
+  return { imported, recipeId, recipe, usable };
+}
+
+/** The name a slot shows: its usable recipe's title or its planner meal's name. */
 async function slotName(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
   if (row.type === "cook") {
-    const recipeId = row.recipeId ?? (await importedRecipe(ctx, row))?.recipeId;
-    const recipe = recipeId === undefined ? null : await ctx.db.get(recipeId);
-    if (recipe !== null) return cleanName(recipe.title);
-    return row.importName ?? "";
+    const { recipeId, recipe, usable } = await cookRecipe(ctx, row);
+    if (usable && recipe !== null) return cleanName(recipe.title);
+    return recipeId === undefined ? (row.importName ?? "") : "";
   }
   if (row.type === "out" || row.type === "left") {
     const meal = row.mealId === undefined ? null : await ctx.db.get(row.mealId);
@@ -425,7 +438,7 @@ export const slotViewValidator = v.object({
   type: slotTypeValidator,
   name: v.string(),
   recipe: v.optional(
-    v.object({ recipeId: v.id("recipes"), ingredientCount: v.number(), available: v.boolean() }),
+    v.object({ recipeId: v.id("recipes"), title: v.string(), ingredientCount: v.number(), available: v.boolean() }),
   ),
   from: v.optional(v.union(slotRefValidator, v.literal("other"))),
   import: v.optional(
@@ -445,7 +458,8 @@ export const week = query({
   args: { plannerId: v.id("planners"), start: v.string() },
   returns: v.object({ slots: v.array(slotViewValidator) }),
   handler: async (ctx, { plannerId, start }) => {
-    const { userId } = await requirePlanner(ctx, plannerId);
+    // Only the owner reads a planner, so recipe access is checked for the slot's writer (the owner).
+    await requirePlanner(ctx, plannerId);
     assertDate(start);
     const loaded = await loadSlots(ctx, plannerId, addDays(start, -6), addDays(start, 6));
     const slots = await Promise.all(
@@ -457,7 +471,7 @@ export const week = query({
           name: slot.name,
           ...(slot.from === undefined ? {} : { from: slot.from }),
         };
-        const imported = await importedRecipe(ctx, row);
+        const { imported, recipeId, recipe, usable } = await cookRecipe(ctx, row);
         if (imported !== null && imported.recipeId === undefined) {
           view.import = {
             importId: imported.recipeImport._id,
@@ -465,20 +479,15 @@ export const week = query({
             ...(imported.recipeImport.recipeId === undefined ? {} : { recipeId: imported.recipeImport.recipeId }),
           };
         }
-        const recipeId = row.type === "cook" ? (row.recipeId ?? imported?.recipeId) : undefined;
         if (recipeId !== undefined) {
-          const recipe = await ctx.db.get(recipeId);
-          const available =
-            recipe !== null &&
-            recipe.deletedAt === undefined &&
-            (await canAccessRecipe(ctx, userId, recipe));
-          const ingredients = available
+          const ingredients = usable
             ? await ctx.db
                 .query("recipeIngredients")
                 .withIndex("by_recipe", (q) => q.eq("recipeId", recipeId))
                 .take(INGREDIENT_COUNT_LIMIT)
             : [];
-          view.recipe = { recipeId, ingredientCount: ingredients.length, available };
+          const title = recipe === null ? "" : cleanName(recipe.title);
+          view.recipe = { recipeId, title, ingredientCount: ingredients.length, available: usable };
         }
         return view;
       }),

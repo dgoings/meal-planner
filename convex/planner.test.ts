@@ -364,14 +364,39 @@ describe("week and suggestions queries", () => {
 
     const { slots } = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
     expect(slots).toEqual([
-      { date: "2026-11-16", meal: "lunch", type: "cook", name: "Chili", recipe: { recipeId, ingredientCount: 2, available: true } },
+      { date: "2026-11-16", meal: "lunch", type: "cook", name: "Chili", recipe: { recipeId, title: "Chili", ingredientCount: 2, available: true } },
       { date: "2026-11-16", meal: "dinner", type: "out", name: "Thai" },
       { date: "2026-11-17", meal: "lunch", type: "left", name: "", from: { date: "2026-11-16", meal: "dinner" } },
     ]);
 
+  });
+
+  it("treats a removed recipe as unlinked: no name, no leftovers source, and retyping relinks", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "lunch", text: "Chili" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "dinner", text: "leftovers" });
+    const chili = await slotOf(t, plannerId, "2026-11-16", "lunch");
+    const recipeId = chili?.type === "cook" ? chili.recipeId! : (null as never);
+
     await as.mutation(api.recipeCards.removeCard, { recipeId });
-    const after = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
-    expect(after.slots[0]).toMatchObject({ name: "Chili", recipe: { recipeId, ingredientCount: 0, available: false } });
+    const { slots } = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(slots[0]).toEqual({
+      date: "2026-11-16",
+      meal: "lunch",
+      type: "cook",
+      name: "",
+      recipe: { recipeId, title: "Chili", ingredientCount: 0, available: false },
+    });
+    await expect(
+      as.mutation(api.planner.setLeftoverOf, { plannerId, date: "2026-11-16", meal: "dinner", from: { date: "2026-11-16", meal: "lunch" } }),
+    ).rejects.toThrow(/can’t be used as leftovers/);
+
+    expect(await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "lunch", text: "Chili" })).toEqual({ type: "cook", name: "Chili" });
+    const relinked = await slotOf(t, plannerId, "2026-11-16", "lunch");
+    expect(relinked?.type === "cook" && relinked.recipeId).not.toBe(recipeId);
+    const again = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(again.slots[0]).toMatchObject({ name: "Chili", recipe: { available: true } });
   });
 
   it("suggests saved recipes and planner meals once each, sorted", async () => {
@@ -438,7 +463,7 @@ describe("importing a recipe link into a slot", () => {
       ...lunch,
       type: "cook",
       name: "The Best Chili",
-      recipe: { recipeId, ingredientCount: 0, available: true },
+      recipe: { recipeId, title: "The Best Chili", ingredientCount: 0, available: true },
     });
   });
 

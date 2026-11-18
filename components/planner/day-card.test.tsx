@@ -43,8 +43,8 @@ describe("DayCard", () => {
 
   it("shows a cook slot's recipe link and ingredient count", () => {
     renderDay([
-      { date: "2026-11-18", meal: "lunch", type: "cook", name: "Chili", recipe: { recipeId, ingredientCount: 1, available: true } },
-      { date: "2026-11-18", meal: "dinner", type: "cook", name: "Stew", recipe: { recipeId, ingredientCount: 3, available: true } },
+      { date: "2026-11-18", meal: "lunch", type: "cook", name: "Chili", recipe: { recipeId, title: "Chili", ingredientCount: 1, available: true } },
+      { date: "2026-11-18", meal: "dinner", type: "cook", name: "Stew", recipe: { recipeId, title: "Stew", ingredientCount: 3, available: true } },
     ]);
     expect(within(lunchOf()).getByRole("combobox")).toHaveValue("Chili");
     expect(within(lunchOf()).getByRole("combobox")).toHaveAttribute("placeholder", "What are you cooking?");
@@ -56,11 +56,12 @@ describe("DayCard", () => {
 
   it("warns about a recipe with no ingredients and one that is gone", () => {
     renderDay([
-      { date: "2026-11-18", meal: "lunch", type: "cook", name: "Chili", recipe: { recipeId, ingredientCount: 0, available: true } },
-      { date: "2026-11-18", meal: "dinner", type: "cook", name: "Stew", recipe: { recipeId, ingredientCount: 0, available: false } },
+      { date: "2026-11-18", meal: "lunch", type: "cook", name: "Chili", recipe: { recipeId, title: "Chili", ingredientCount: 0, available: true } },
+      { date: "2026-11-18", meal: "dinner", type: "cook", name: "", recipe: { recipeId, title: "Stew", ingredientCount: 0, available: false } },
     ]);
     expect(within(lunchOf()).getByText("No ingredients yet")).toBeInTheDocument();
-    expect(within(dinnerOf()).getByText("Removed from your Recipe Book")).toBeInTheDocument();
+    expect(within(dinnerOf()).getByText("Stew was removed from your Recipe Book")).toBeInTheDocument();
+    expect(within(dinnerOf()).getByRole("combobox")).toHaveValue("");
     expect(within(dinnerOf()).queryByRole("link")).toBeNull();
   });
 

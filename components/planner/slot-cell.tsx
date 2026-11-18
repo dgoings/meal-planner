@@ -434,7 +434,8 @@ function SlotMeta({
   }
   if (!slot || !recipe) return null;
   if (!recipe.available) {
-    return <p className="planner-meta"><span className="planner-warn">Removed from your Recipe Book</span></p>;
+    const removed = recipe.title === "" ? "This recipe" : recipe.title;
+    return <p className="planner-meta"><span className="planner-warn">{removed} was removed from your Recipe Book</span></p>;
   }
   const count = recipe.ingredientCount;
   return (
