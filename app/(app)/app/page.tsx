@@ -17,6 +17,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { recipeArt, recipeTotalMinutes } from "@/lib/data/recipe-view";
+import { displayName } from "@/lib/display-name";
 import type { Recipe } from "@/lib/data/types";
 
 const quickActions = [
@@ -71,7 +72,7 @@ export default function DashboardPage() {
   return (
     <div className="page-container">
       <PageHeader
-        eyebrow={`${timeGreeting()}${user?.name ? `, ${user.name.split(/\s+/)[0]}` : ""}`}
+        eyebrow={`${timeGreeting()}${user ? `, ${displayName(user).split(/\s+/)[0]}` : ""}`}
         title="What are we cooking?"
         description="Your kitchen command center for saved recipes and grocery planning."
       />

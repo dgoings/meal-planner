@@ -4,66 +4,66 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PasswordResetForm } from "./password-reset-form";
 
 const mocks = vi.hoisted(() => ({
-  signIn: vi.fn(),
-  replace: vi.fn(),
-  refresh: vi.fn(),
+  startPasswordRecovery: vi.fn(),
 }));
 
-vi.mock("@convex-dev/auth/react", () => ({
-  useAuthActions: () => ({ signIn: mocks.signIn }),
+vi.mock("@convex-dev/auth/methods/email-password/react", () => ({
+  useStartPasswordRecovery: () => ({
+    startPasswordRecovery: mocks.startPasswordRecovery,
+    pending: false,
+  }),
 }));
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh }),
-}));
+async function requestLink(email: string) {
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("Email"), email);
+  await user.click(screen.getByRole("button", { name: "Send reset link" }));
+}
 
 describe("PasswordResetForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("requests a reset code and then accepts a new password", async () => {
-    mocks.signIn
-      .mockResolvedValueOnce({ signingIn: false })
-      .mockResolvedValueOnce({ signingIn: true });
-    const user = userEvent.setup();
+  it("requests a reset link and tells the user to check their email", async () => {
+    mocks.startPasswordRecovery.mockResolvedValue({ success: true, sentTo: "cook@example.com" });
     render(<PasswordResetForm />);
 
-    await user.type(screen.getByLabelText("Email"), " Cook@Example.com ");
-    await user.click(screen.getByRole("button", { name: "Send reset code" }));
+    await requestLink(" Cook@Example.com ");
 
-    const requestData = mocks.signIn.mock.calls[0][1] as FormData;
-    expect(requestData.get("flow")).toBe("reset");
-    expect(requestData.get("email")).toBe("cook@example.com");
-    expect(screen.getByText(/six-digit code sent to cook@example.com/i)).toBeInTheDocument();
-
-    await user.type(screen.getByLabelText("Reset code"), "123456");
-    await user.type(screen.getByLabelText("New password"), "new-password-123");
-    await user.click(screen.getByRole("button", { name: "Reset password" }));
-
-    const verificationData = mocks.signIn.mock.calls[1][1] as FormData;
-    expect(verificationData.get("flow")).toBe("reset-verification");
-    expect(verificationData.get("email")).toBe("cook@example.com");
-    expect(verificationData.get("code")).toBe("123456");
-    expect(verificationData.get("newPassword")).toBe("new-password-123");
-    expect(mocks.replace).toHaveBeenCalledWith("/app");
-    expect(mocks.refresh).toHaveBeenCalledOnce();
+    expect(mocks.startPasswordRecovery).toHaveBeenCalledWith({ email: "cook@example.com" });
+    expect(screen.getByRole("heading", { name: /check your email/i })).toBeInTheDocument();
+    expect(screen.getByText(/cook@example\.com/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("shows a safe message for an invalid or expired code", async () => {
-    mocks.signIn
-      .mockResolvedValueOnce({ signingIn: false })
-      .mockRejectedValueOnce(new Error("Invalid code"));
-    const user = userEvent.setup();
+  it("gives the same answer when no account uses the address", async () => {
+    mocks.startPasswordRecovery.mockResolvedValue({
+      success: false,
+      userError: { error: "EMAIL_NOT_FOUND" },
+    });
     render(<PasswordResetForm />);
 
-    await user.type(screen.getByLabelText("Email"), "cook@example.com");
-    await user.click(screen.getByRole("button", { name: "Send reset code" }));
-    await user.type(screen.getByLabelText("Reset code"), "111111");
-    await user.type(screen.getByLabelText("New password"), "new-password-123");
-    await user.click(screen.getByRole("button", { name: "Reset password" }));
+    await requestLink("nobody@example.com");
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Code not accepted");
-    expect(screen.getByRole("button", { name: "Reset password" })).toBeEnabled();
+    expect(screen.getByRole("heading", { name: /check your email/i })).toBeInTheDocument();
+    expect(screen.getByText(/nobody@example\.com/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [{ error: "RATE_LIMITED", retryAfterMs: 60_000 }, "Too many attempts"],
+    [{ error: "INVALID_EMAIL" }, "Check your email address"],
+    [{ error: "OTHER_ERROR", cause: new Error("internal detail") }, "Couldn’t send a reset link"],
+  ])("shows %o and stays on the form", async (userError, title) => {
+    mocks.startPasswordRecovery.mockResolvedValue({ success: false, userError });
+    render(<PasswordResetForm />);
+
+    await requestLink("cook@example.com");
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(title);
+    expect(alert).not.toHaveTextContent("internal detail");
+    expect(screen.getByRole("button", { name: "Send reset link" })).toBeEnabled();
   });
 });

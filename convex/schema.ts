@@ -1,6 +1,5 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { authTables } from "@convex-dev/auth/server";
 import { recipeExtractionValidator } from "./lib/recipeAgentTypes";
 
 const importStatus = v.union(
@@ -21,14 +20,16 @@ const groceryListStatus = v.union(
 );
 
 export default defineSchema({
-  ...authTables,
-
-  // This extends Convex Auth's users table with optional application profile
-  // fields. Auth providers are not required to supply the custom fields.
+  // The app's own users. Convex Auth keeps credentials, verified emails, and
+  // sessions in its components and refers to these rows by id. `email` is
+  // copied from the auth email component at sign-in, so it is set only once
+  // the address has been confirmed.
   users: defineTable({
     name: v.optional(v.string()),
     image: v.optional(v.string()),
     email: v.optional(v.string()),
+    // Leftovers from Convex Auth v1, kept only so rows written before the
+    // move to 2.0 still validate. Current code never writes or reads them.
     emailVerificationTime: v.optional(v.number()),
     phone: v.optional(v.string()),
     phoneVerificationTime: v.optional(v.number()),
@@ -38,8 +39,7 @@ export default defineSchema({
     deletionRequestedAt: v.optional(v.number()),
     deletionStage: v.optional(
       v.union(
-        v.literal("authAccounts"),
-        v.literal("authSessions"),
+        v.literal("auth"),
         v.literal("savedRecipes"),
         v.literal("userInboxes"),
         v.literal("inboundEmails"),
@@ -58,9 +58,7 @@ export default defineSchema({
     ),
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
-  })
-    .index("email", ["email"])
-    .index("phone", ["phone"]),
+  }).index("email", ["email"]),
 
   // Maps each account to its AgentMail inbox. The AgentMail component keeps
   // message and thread contents in its isolated component tables.

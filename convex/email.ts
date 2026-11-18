@@ -1,11 +1,13 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
+import { components } from "./_generated/api";
 import {
   internalMutation,
   mutation,
   query,
+  type MutationCtx,
 } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   optionalStringField,
   primaryRecipeLinkFromMessage,
@@ -196,6 +198,34 @@ export const queueUrl = mutation({
   },
 });
 
+/** How many `users` rows sharing one address the inbound lookup considers. */
+const MAX_USERS_PER_EMAIL = 10;
+
+/**
+ * The one account that owns `address` right now: its `users.email` matches
+ * and Convex Auth lists the address among its verified emails. `users.email`
+ * alone is not enough, because rows left from before Convex Auth 2.0 or a
+ * row whose address has since changed can carry an address the user no
+ * longer owns. No owner, several, or one being deleted means no attribution.
+ */
+async function verifiedOwnerOf(ctx: MutationCtx, address: string) {
+  const candidates = await ctx.db
+    .query("users")
+    .withIndex("email", (q) => q.eq("email", address))
+    .take(MAX_USERS_PER_EMAIL);
+  const owners: Doc<"users">[] = [];
+  for (const candidate of candidates) {
+    if (candidate.deletionRequestedAt !== undefined) continue;
+    const verified = await ctx.runQuery(components.authEmail.verifiedEmails.getEmails, {
+      userId: candidate._id,
+    });
+    if (verified.some(({ email }) => email.trim().toLowerCase() === address)) {
+      owners.push(candidate);
+    }
+  }
+  return owners.length === 1 ? owners[0] : null;
+}
+
 export const onMessageReceived = internalMutation({
   args: { message: v.any(), thread: v.any(), eventId: v.string() },
   returns: v.object({ queued: v.number() }),
@@ -212,15 +242,8 @@ export const onMessageReceived = internalMutation({
 
     const fromAddress = senderEmail(message);
     if (fromAddress === undefined) return { queued: 0 };
-    const user = await ctx.db
-      .query("users")
-      .withIndex("email", (q) => q.eq("email", fromAddress))
-      .unique();
-    // An unverified address proves nothing about who owns the mailbox, so its
-    // forwards are not attributed to the account that claimed it.
-    if (user === null || user.emailVerificationTime === undefined) {
-      return { queued: 0 };
-    }
+    const user = await verifiedOwnerOf(ctx, fromAddress);
+    if (user === null) return { queued: 0 };
 
     const alreadyHandled = await ctx.db
       .query("inboundRecipeEmails")

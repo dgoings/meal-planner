@@ -82,11 +82,13 @@ pull requests.
 The frontend currently includes the following responsive, navigable flows:
 
 - **Marketing and authentication:** landing page plus working password-based
-  sign-in, sign-up, and emailed password-recovery screens backed by Convex Auth.
-  New accounts confirm their email address with a six-digit code before a
-  session starts; an existing account that has not confirmed yet is asked for
-  a code at its next sign-in. Application routes require an authenticated
-  session.
+  sign-in, sign-up, and password-recovery screens backed by Convex Auth 2.0.
+  Sign-up asks only for an email address and a password (the name can be set
+  later in Settings); the account starts once its owner opens the confirmation
+  link emailed to them. Password recovery also works through an emailed link.
+  Links only work in the browser that requested them and expire; to get a new
+  confirmation link, sign up again with the same address. Application routes
+  require an authenticated session.
 - **Application shell:** responsive desktop sidebar and five-item mobile bottom
   navigation. Recipe Inbox lives with the primary destinations; Log out and
   Settings are grouped at the bottom of the desktop sidebar.
@@ -243,6 +245,25 @@ grocery items. Recipe-card removal is a soft deletion so generated grocery data
 can remain independent; deleting a grocery list removes that list and its item
 provenance without deleting the recipe.
 
+### Account email (Resend)
+
+Convex Auth sends the sign-up confirmation, password-reset, and
+email-change links through the [Resend](https://resend.com) Convex component.
+Create a Resend API key and set it, the sender, and the frontend origin the
+links point at on the Convex deployment:
+
+```sh
+npx convex env set RESEND_API_KEY
+npx convex env set SENDER_EMAIL
+npx convex env set SENDER_NAME   # optional, defaults to PerfectPlate
+npx convex env set SITE_URL      # e.g. http://localhost:3000 for development
+```
+
+Without `SENDER_EMAIL`, mail is sent from Resend's test sender,
+`onboarding@resend.dev`, which only delivers to the email address of the
+Resend account owner. To let real users sign up, verify a domain in Resend and
+use a sender address on it. `SITE_URL` defaults to `http://localhost:3000`.
+
 ### AgentMail
 
 The official AgentMail Convex component stores inbox messages and threads,
@@ -253,8 +274,7 @@ Open the [AgentMail console](https://console.agentmail.to) and select the
 AgentMail account used by PerfectPlate. Create an API key, then select the
 shared PerfectPlate inbox. Copy its inbox ID, which is usually the inbox email
 address (`perfectplate@agentmail.to`). The inbox and API key must belong to the
-same AgentMail account; otherwise AgentMail returns `404 Inbox not found` when
-the application tries to send mail.
+same AgentMail account.
 
 Store both values directly on the Convex development deployment. Omit each
 value from the command so the CLI prompts for it without placing the secret in
@@ -273,9 +293,9 @@ npx convex env set AGENTMAIL_API_KEY --deployment <deployment-name>
 npx convex env set AGENTMAIL_INBOX_ID --deployment <deployment-name>
 ```
 
-PerfectPlate uses this single configured inbox for forwarded recipes and for
-sending email-confirmation and password-reset codes, so sign-up depends on it
-being configured. It never creates AgentMail inboxes automatically.
+PerfectPlate uses this single configured inbox only to receive forwarded
+recipes; account email goes through Resend, so sign-up does not depend on
+AgentMail. It never creates AgentMail inboxes automatically.
 Users should forward recipes from the email address they use to sign in so the
 inbound webhook can privately associate each message with the correct account.
 Forwards are attributed only to accounts whose email address is confirmed. The
@@ -312,25 +332,28 @@ In the Vercel project settings:
 - Add `CONVEX_DEPLOY_KEY` (a production deploy key from the Convex dashboard)
   to the Production environment only.
 
-On the production Convex deployment, set the site URL used by Convex Auth,
-alongside the recipe model and AgentMail values described above:
+On the production Convex deployment, set the site URL that the emailed links
+point at, alongside the Resend, recipe model, and AgentMail values described
+above:
 
 ```sh
 npx convex env set SITE_URL https://perfectplate.vercel.app --prod
 ```
 
-Email confirmation became a sign-up requirement after the first accounts were
-created. Run this once, immediately after the first deployment that includes
-it, so those earlier accounts are treated as confirmed:
-
-```sh
-npx convex run migrations:grandfatherEmailVerification --prod
-```
-
-It is safe to run again. To run it later without confirming accounts created
-in the meantime, pass the deployment time in milliseconds, for example
-`'{"createdBefore": 1794700800000}'`.
-
 Register the production webhook, `https://<production-deployment>.convex.site/agentmail/webhook`,
 in the AgentMail console. API keys and webhook secrets stay on the Convex
 deployment; none belong in Vercel or Git.
+
+### Upgrading an existing deployment
+
+This version moves to Convex Auth 2.0, which cannot yet migrate Convex Auth v1
+accounts. After upgrading, every user registers again. The v1 `users` rows stay
+in the database with their old fields, but those accounts and their data are
+not linked to the newly registered accounts.
+
+## Known limitations
+
+- Deleting an account revokes its sessions and removes its email addresses,
+  but leaves its password hash behind, because Convex Auth 2.0 has no function
+  to delete it. The hash can no longer be reached once the email addresses are
+  gone.

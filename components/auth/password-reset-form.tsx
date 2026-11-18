@@ -1,99 +1,41 @@
 "use client";
 
-import { useAuthActions } from "@convex-dev/auth/react";
-import { ArrowLeft, ArrowRight, CheckCircle2, KeyRound, Mail } from "lucide-react";
+import { useStartPasswordRecovery } from "@convex-dev/auth/methods/email-password/react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Mail } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { Brand } from "@/components/brand";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-type ResetError = {
-  title: string;
-  description: string;
-};
-
-function resetErrorMessage(error: unknown, step: "request" | "verify"): ResetError {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-
-  if (message.includes("invalid code") || message.includes("invalid verification")) {
-    return {
-      title: "Code not accepted",
-      description: "That code is incorrect or has expired. Check the email and try again.",
-    };
-  }
-
-  if (message.includes("invalid password")) {
-    return {
-      title: "Password doesn’t meet the requirements",
-      description: "Choose a password with at least 8 characters.",
-    };
-  }
-
-  if (message.includes("toomanyfailedattempts")) {
-    return {
-      title: "Too many attempts",
-      description: "Wait a little while before requesting or entering another code.",
-    };
-  }
-
-  return {
-    title: step === "request" ? "Couldn’t send a reset code" : "Couldn’t reset your password",
-    description: "We couldn’t complete that request. Please try again.",
-  };
-}
+import { api } from "@/convex/_generated/api";
+import { authErrorMessage, type AuthErrorMessage } from "./auth-error-message";
 
 export function PasswordResetForm() {
-  const { signIn } = useAuthActions();
-  const router = useRouter();
-  const [step, setStep] = useState<"request" | "verify">("request");
-  const [email, setEmail] = useState("");
-  const [error, setError] = useState<ResetError | null>(null);
+  const { startPasswordRecovery } = useStartPasswordRecovery(api.auth);
+  // The address a reset link was requested for, once the request is done.
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [error, setError] = useState<AuthErrorMessage | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function requestCode(event: FormEvent<HTMLFormElement>) {
+  async function requestLink(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
 
     const formData = new FormData(event.currentTarget);
-    const normalizedEmail = String(formData.get("email") ?? "").trim().toLowerCase();
-    formData.set("email", normalizedEmail);
-    formData.set("flow", "reset");
+    const email = String(formData.get("email") ?? "").trim().toLowerCase();
 
-    try {
-      await signIn("password", formData);
-      setEmail(normalizedEmail);
-      setStep("verify");
-    } catch (caughtError) {
-      setError(resetErrorMessage(caughtError, "request"));
-    } finally {
-      setIsSubmitting(false);
+    const result = await startPasswordRecovery({ email });
+    // An unknown address gets the same answer as a known one, so the form
+    // does not reveal which addresses have accounts. The typed address is
+    // shown in both cases for the same reason.
+    if (result.success || result.userError.error === "EMAIL_NOT_FOUND") {
+      setSentTo(email);
+    } else {
+      setError(authErrorMessage(result.userError, "Couldn’t send a reset link"));
     }
-  }
-
-  async function verifyCode(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    setIsSubmitting(true);
-
-    const formData = new FormData(event.currentTarget);
-    formData.set("email", email);
-    formData.set("flow", "reset-verification");
-
-    try {
-      const result = await signIn("password", formData);
-      if (!result.signingIn) {
-        throw new Error("Password reset could not be completed");
-      }
-      router.replace("/app");
-      router.refresh();
-    } catch (caughtError) {
-      setError(resetErrorMessage(caughtError, "verify"));
-      setIsSubmitting(false);
-    }
+    setIsSubmitting(false);
   }
 
   return (
@@ -108,7 +50,7 @@ export function PasswordResetForm() {
           <ul className="mt-8 grid gap-4 text-sm text-white/80">
             <li className="flex gap-3">
               <CheckCircle2 className="mt-px shrink-0" size={19} />
-              Reset securely with a one-time email code
+              Reset securely with a link sent to your email
             </li>
             <li className="flex gap-3">
               <CheckCircle2 className="mt-px shrink-0" size={19} />
@@ -124,12 +66,12 @@ export function PasswordResetForm() {
           <div className="mb-10 lg:hidden"><Brand /></div>
           <p className="eyebrow">Reset your password</p>
           <h1 className="font-display text-4xl font-semibold">
-            {step === "request" ? "Find your account" : "Check your email"}
+            {sentTo === null ? "Find your account" : "Check your email"}
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            {step === "request"
+            {sentTo === null
               ? "Enter the email address you use for PerfectPlate."
-              : `Enter the six-digit code sent to ${email}, then choose a new password.`}
+              : `If ${sentTo} has a PerfectPlate account, we sent it a link to choose a new password. Open it in this browser.`}
           </p>
 
           {error && (
@@ -139,8 +81,8 @@ export function PasswordResetForm() {
             </Alert>
           )}
 
-          {step === "request" ? (
-            <form className="mt-8 grid gap-4" onSubmit={requestCode}>
+          {sentTo === null ? (
+            <form className="mt-8 grid gap-4" onSubmit={requestLink}>
               <label className="grid gap-2 text-sm font-bold">
                 Email
                 <div className="relative">
@@ -149,38 +91,23 @@ export function PasswordResetForm() {
                 </div>
               </label>
               <Button disabled={isSubmitting} type="submit" size="lg" className="mt-2">
-                {isSubmitting ? "Sending code…" : "Send reset code"}
+                {isSubmitting ? "Sending link…" : "Send reset link"}
                 {!isSubmitting && <ArrowRight size={17} />}
               </Button>
             </form>
           ) : (
-            <form className="mt-8 grid gap-4" onSubmit={verifyCode}>
-              <label className="grid gap-2 text-sm font-bold">
-                Reset code
-                <Input required autoFocus name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="123456" />
-              </label>
-              <label className="grid gap-2 text-sm font-bold">
-                New password
-                <div className="relative">
-                  <KeyRound className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} aria-hidden />
-                  <Input className="auth-input-with-icon" required minLength={8} name="newPassword" type="password" autoComplete="new-password" placeholder="At least 8 characters" />
-                </div>
-              </label>
-              <Button disabled={isSubmitting} type="submit" size="lg" className="mt-2">
-                {isSubmitting ? "Resetting password…" : "Reset password"}
-                {!isSubmitting && <ArrowRight size={17} />}
-              </Button>
+            <div className="mt-8 grid gap-4">
+              <p className="text-sm leading-6 text-muted-foreground">
+                The link expires soon. If it doesn’t arrive, check your spam folder or request a new link.
+              </p>
               <button
-                className="text-sm font-bold text-primary underline underline-offset-4"
+                className="justify-self-start text-sm font-bold text-primary underline underline-offset-4"
                 type="button"
-                onClick={() => {
-                  setStep("request");
-                  setError(null);
-                }}
+                onClick={() => setSentTo(null)}
               >
                 Use a different email
               </button>
-            </form>
+            </div>
           )}
 
           <Link className="mt-6 inline-flex items-center gap-2 text-sm font-bold text-primary underline underline-offset-4" href="/sign-in">

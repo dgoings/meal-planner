@@ -1,103 +1,77 @@
-import type { EmailProviderSendVerificationRequestParams } from "@auth/core/providers/email";
-import { Email } from "@convex-dev/auth/providers/Email";
-import { Password } from "@convex-dev/auth/providers/Password";
-import { convexAuth } from "@convex-dev/auth/server";
+import {
+  setupEmailPassword,
+  type CompleteChangeEmailResult,
+} from "@convex-dev/auth/methods/email-password/server";
+import { getAuthUserId, setupConvexAuth } from "@convex-dev/auth/server";
+import { v } from "convex/values";
+import { api, components, internal } from "./_generated/api";
+import { env, mutation } from "./_generated/server";
+import { copyVerifiedEmail } from "./users";
 
-async function sendCodeEmail(
-  { identifier, token }: EmailProviderSendVerificationRequestParams,
-  purpose: "password-reset" | "email-verification",
-) {
-  const copy =
-    purpose === "password-reset"
-      ? {
-          subject: "Reset your PerfectPlate password",
-          label: "password reset code",
-          ignore: "If you did not request this, you can ignore this email.",
-        }
-      : {
-          subject: "Confirm your PerfectPlate email address",
-          label: "email confirmation code",
-          ignore: "If you did not create a PerfectPlate account, you can ignore this email.",
-        };
-  const apiKey = process.env.AGENTMAIL_API_KEY?.trim();
-  const inboxId = process.env.AGENTMAIL_INBOX_ID?.trim();
-  if (!apiKey) {
-    throw new Error("AGENTMAIL_API_KEY is not configured");
-  }
-  if (!inboxId) {
-    throw new Error("AGENTMAIL_INBOX_ID is not configured");
-  }
+// The emailed links must be absolute, so they are built from the frontend
+// origin the deployment is configured with.
+const siteUrl = (env.SITE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+const senderName = env.SENDER_NAME ?? "PerfectPlate";
+const senderEmail = env.SENDER_EMAIL ?? "onboarding@resend.dev";
 
-  // Account email runs in the parent Convex action rather than the isolated
-  // AgentMail component so deployment secrets are available and a rejected
-  // send is reported to the user immediately.
-  const baseUrl = (process.env.AGENTMAIL_BASE_URL ?? "https://api.agentmail.to/v0")
-    .trim()
-    .replace(/\/$/, "");
-  const response = await fetch(
-    `${baseUrl}/inboxes/${encodeURIComponent(inboxId)}/messages/send`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        to: identifier,
-        subject: copy.subject,
-        text: `Your PerfectPlate ${copy.label} is ${token}. It expires in 15 minutes. ${copy.ignore}`,
-        html: `<p>Your PerfectPlate ${copy.label} is:</p><p style="font-size: 28px; font-weight: 700; letter-spacing: 0.2em;">${token}</p><p>This code expires in 15 minutes. ${copy.ignore}</p>`,
-        labels: [purpose],
-      }),
-    },
-  );
+const auth = setupConvexAuth({ component: components.auth });
 
-  if (!response.ok) {
-    throw new Error(`AgentMail rejected the ${purpose} email (${response.status})`);
-  }
-}
+export const { signOut, refreshSession, isAuthenticated } = auth;
 
-async function generateSixDigitCode() {
-  // Rejection sampling avoids modulo bias while keeping the code easy to type.
-  const limit = Math.floor(2 ** 32 / 1_000_000) * 1_000_000;
-  const randomValue = new Uint32Array(1);
-  do {
-    crypto.getRandomValues(randomValue);
-  } while (randomValue[0] >= limit);
-  return String(randomValue[0] % 1_000_000).padStart(6, "0");
-}
-
-const passwordResetEmail = Email({
-  id: "password-reset",
-  maxAge: 15 * 60,
-  generateVerificationToken: generateSixDigitCode,
-  sendVerificationRequest: (params) => sendCodeEmail(params, "password-reset"),
+const emailPassword = setupEmailPassword(auth, {
+  component: components.authEmail,
+  passwordComponent: components.authPassword,
+  emailSender: {
+    kind: "resend",
+    sendEmail: components.resend.lib.sendEmail,
+    apiKey: env.RESEND_API_KEY ?? "",
+    from: `${senderName} <${senderEmail}>`,
+  },
+  urls: {
+    signUp: `${siteUrl}/validate-email`,
+    changeEmail: `${siteUrl}/confirm-email-change`,
+    recovery: `${siteUrl}/reset-password`,
+  },
+}).attachUserCallbacks({
+  createUser: internal.users.createUserEmailPassword,
+  onSignIn: internal.users.syncUserEmail,
 });
 
-const emailVerificationEmail = Email({
-  id: "email-verification",
-  maxAge: 15 * 60,
-  generateVerificationToken: generateSixDigitCode,
-  sendVerificationRequest: (params) =>
-    sendCodeEmail(params, "email-verification"),
-});
+export const {
+  signUpWithEmailPassword,
+  completeSignUpWithEmailPassword,
+  signInWithEmailPassword,
+  changePassword,
+  startPasswordRecovery,
+  checkPasswordRecovery,
+  completePasswordRecovery,
+  startChangeEmail,
+} = emailPassword;
 
-export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
-  providers: [
-    Password({
-      reset: passwordResetEmail,
-      verify: emailVerificationEmail,
-      profile(params) {
-        const email = params.email;
-        if (typeof email !== "string") {
-          throw new Error("Email is required");
-        }
+/**
+ * Convex Auth's own email-change completion, which `completeChangeEmail`
+ * runs. Convex Auth builds it as a public mutation, so it is callable
+ * directly; doing so only skips the `users.email` refresh, which the next
+ * sign-in repairs, and forwarded mail never relies on `users.email` alone.
+ */
+export const completeChangeEmailInAuth = emailPassword.completeChangeEmail;
 
-        return {
-          email: email.trim().toLowerCase(),
-          name: typeof params.name === "string" ? params.name.trim() : "",
-        };
-      },
-    }),
-  ],
+/**
+ * Completes an email change, then copies the new address onto `users.email`.
+ * Convex Auth mints no session for an email change, so `onSignIn` does not
+ * run and would otherwise leave the old address on the user.
+ */
+export const completeChangeEmail = mutation({
+  args: { emailCode: v.string(), browserSecret: v.string() },
+  handler: async (ctx, args): Promise<CompleteChangeEmailResult> => {
+    const result: CompleteChangeEmailResult = await ctx.runMutation(
+      api.auth.completeChangeEmailInAuth,
+      args,
+    );
+    if (result.success) {
+      const userId = await getAuthUserId(ctx);
+      if (userId !== null) await copyVerifiedEmail(ctx, userId);
+    }
+    return result;
+  },
 });
