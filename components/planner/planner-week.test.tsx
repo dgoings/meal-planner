@@ -123,4 +123,32 @@ describe("PlannerWeek", () => {
     expect(screen.getByText("Skip 1")).toBeInTheDocument();
     expect(screen.getByText("Leftovers 0")).toBeInTheDocument();
   });
+
+  it("shows seven days from the week start, marks today and scrolls to it on a phone", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true }) as unknown as typeof window.matchMedia;
+    render(<PlannerWeek />);
+    const days = screen.getAllByRole("listitem").filter((item) => item.classList.contains("planner-day"));
+    expect(days.map((day) => day.querySelector("h3")?.textContent?.slice(0, 3))).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    expect(days[2]).toHaveAttribute("aria-current", "date");
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.contexts[0]).toBe(days[2]);
+  });
+
+  it("does not scroll on another week", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true }) as unknown as typeof window.matchMedia;
+    mocks.search = "week=2026-11-30";
+    render(<PlannerWeek />);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("offers autocomplete from the planner's suggestions", () => {
+    mocks.queries["planner:suggestions"] = ["Chili", "Thai"];
+    const { container } = render(<PlannerWeek />);
+    const options = [...container.querySelectorAll("datalist#planner-suggestions option")].map((option) => option.getAttribute("value"));
+    expect(options).toEqual(["Chili", "Thai"]);
+  });
 });

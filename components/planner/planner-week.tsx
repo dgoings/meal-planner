@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { ChevronLeft, ChevronRight, Settings2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
@@ -12,9 +12,11 @@ import {
   formatWeekRange,
   isDateKey,
   localDateKey,
+  weekDates,
   weekStartOf,
   type WeekStart,
 } from "@/convex/lib/plannerSlots";
+import { DayCard, dayCardId } from "./day-card";
 import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
 import { WeekStrip } from "./week-strip";
 
@@ -60,6 +62,38 @@ export function PlannerWeek() {
   const start = weekStartOf(requested !== null && isDateKey(requested) ? requested : today, weekStartPreference);
   const currentStart = weekStartOf(today, weekStartPreference);
   const week = useQuery(api.planner.week, planner ? { plannerId: planner.plannerId, start } : "skip");
+  const suggestions = useQuery(api.planner.suggestions, planner ? { plannerId: planner.plannerId } : "skip");
+
+  // A control to focus once it exists: a slot's type can change its main
+  // control, which appears only after the week query updates (§2.3).
+  const pendingFocus = useRef<string | null>(null);
+  const requestFocus = useCallback((id: string) => {
+    const element = document.getElementById(id);
+    if (element) {
+      pendingFocus.current = null;
+      element.focus();
+    } else {
+      pendingFocus.current = id;
+    }
+  }, []);
+  useEffect(() => {
+    if (pendingFocus.current === null) return;
+    const element = document.getElementById(pendingFocus.current);
+    if (element) {
+      pendingFocus.current = null;
+      element.focus();
+    }
+  });
+
+  // On a phone, open the current week at today's card, once.
+  const scrolledToToday = useRef(false);
+  const weekLoaded = week !== undefined;
+  useEffect(() => {
+    if (scrolledToToday.current || !weekLoaded || start !== currentStart) return;
+    scrolledToToday.current = true;
+    if (typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 767px)").matches) return;
+    document.getElementById(dayCardId(today))?.scrollIntoView?.({ block: "start" });
+  }, [weekLoaded, start, currentStart, today]);
 
   useEffect(() => {
     if (focusPrevious.current && start === currentStart) {
@@ -115,6 +149,22 @@ export function PlannerWeek() {
       ) : (
         <>
           <WeekStrip slots={week.slots} start={start} />
+          <ul className="planner-days" aria-label={`Meals for ${formatWeekRange(start)}`}>
+            {weekDates(start).map((date) => (
+              <DayCard
+                key={date}
+                plannerId={planner.plannerId}
+                date={date}
+                today={date === today}
+                weekStart={start}
+                slots={week.slots}
+                requestFocus={requestFocus}
+              />
+            ))}
+          </ul>
+          <datalist id="planner-suggestions">
+            {(suggestions ?? []).map((name) => <option key={name} value={name} />)}
+          </datalist>
         </>
       )}
 
