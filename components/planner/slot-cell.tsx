@@ -3,9 +3,8 @@
 import { useMutation } from "convex/react";
 import Link from "next/link";
 import { convexErrorCode, isMissingKeyCode } from "@/lib/recipe-import-errors";
-import { useEffect, useImperativeHandle, useRef, useState, type FocusEvent, type Ref } from "react";
+import { useEffect, useRef, useState, type FocusEvent } from "react";
 import { ImportResultDialog } from "@/components/discovery/import-result-dialog";
-import { Input } from "@/components/ui/input";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { isRecipeLink, type Meal, type SlotType } from "@/convex/lib/plannerRules";
@@ -19,6 +18,9 @@ import {
 } from "@/convex/lib/plannerSlots";
 import { announceRecipeImport } from "@/lib/recipe-import-events";
 import { cn } from "@/lib/utils";
+import { mainOptions, mealOptions, type PickerOption } from "./picker-options";
+import { SlotInput, usePlannerPicker, type Committed, type SlotInputHandle } from "./slot-combobox";
+import { SlotImportDialog } from "./slot-import-dialog";
 import { SLOT_TYPES, type SlotView } from "./types";
 
 /** The id of a slot's main control: its input, its leftovers select or its Skip button. */
@@ -46,6 +48,10 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
   const commitOther = useMutation(api.planner.commitOther);
   const setLeftoverOf = useMutation(api.planner.setLeftoverOf);
   const importLink = useMutation(api.planner.importLink);
+  const attachRecipe = useMutation(api.planner.attachRecipe);
+  const createRecipeForSlot = useMutation(api.planner.createRecipeForSlot);
+  const picker = usePlannerPicker();
+  const [importOpen, setImportOpen] = useState(false);
   const [pending, setPending] = useState(0);
   const [failed, setFailed] = useState(false);
   const [needsAiKey, setNeedsAiKey] = useState(false);
@@ -169,6 +175,17 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
     return runNamed(async () => (await commitText({ plannerId, date, meal, text })).name);
   }
 
+  /** A row picked from the main input's list. */
+  function pickMain(option: PickerOption): Promise<Committed> {
+    if (option.kind === "recipe") {
+      return runNamed(async () => (await attachRecipe({ plannerId, date, meal, recipeId: option.recipeId })).name);
+    }
+    if (option.kind === "create") {
+      return runNamed(async () => (await createRecipeForSlot({ plannerId, date, meal, name: option.name })).name);
+    }
+    return commitMain(option.label);
+  }
+
   /** Runs a text commit; resolves to the name the server stored, `{}` if unknown, or null if it failed. */
   async function runNamed(change: () => Promise<string>): Promise<Committed> {
     let name: string | undefined;
@@ -224,6 +241,7 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
           }}
           onCommitOther={(text) => runNamed(async () => (await commitOther({ plannerId, date, meal, text })).name)}
           onEnter={focusNext}
+          meals={picker.meals}
         />
       ) : (
         <SlotInput
@@ -235,10 +253,18 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
           placeholder={type === "cook" || type === "out" ? PLACEHOLDERS[type] : `Plan ${meal}`}
           onCommit={commitMain}
           onEnter={focusNext}
+          options={(text, browse) => mainOptions(picker, text, type, browse)}
+          onPick={pickMain}
         />
       )}
 
-      <SlotMeta slot={slot} pending={pending > 0} onShowImport={showImport} />
+      <SlotMeta
+        slot={slot}
+        pending={pending > 0}
+        onShowImport={showImport}
+        onChooseRecipe={() => mainInput.current?.openPicker()}
+        onImportLink={() => setImportOpen(true)}
+      />
       {failed && (
         <p className="planner-meta planner-error" role="alert">
           {needsAiKey
@@ -246,118 +272,21 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
             : "Couldn’t save this meal. Try again."}
         </p>
       )}
+      {slot?.type === "cook" && (
+        <SlotImportDialog
+          plannerId={plannerId}
+          date={date}
+          meal={meal}
+          name={slot.name || label}
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          onStarted={showImport}
+        />
+      )}
       {resultImportId !== null && (
         <ImportResultDialog importId={resultImportId} open={resultOpen} onOpenChange={setResultOpen} />
       )}
     </section>
-  );
-}
-
-/** A commit's outcome: the name the server stored (when it says), or null if it failed. */
-type Committed = { name?: string } | null;
-
-type SlotInputHandle = {
-  /**
-   * Hands over an uncommitted draft (not a link, which commits as usual) and
-   * marks it committed; `restore` undoes that if the change carrying it fails.
-   */
-  takeDraft: () => { text: string; restore: () => void } | undefined;
-  /** Commits an uncommitted draft, after a held blur. */
-  flush: () => void;
-};
-
-/**
- * A slot's text input. It keeps its own draft and commits on Enter, change
- * and blur; the last committed text guards against Enter followed by blur
- * committing twice.
- */
-function SlotInput({
-  handle,
-  holdBlur,
-  id,
-  label,
-  initial,
-  placeholder,
-  onCommit,
-  onEnter,
-}: {
-  handle?: Ref<SlotInputHandle>;
-  /** Whether to hold this blur's commit for a type button press. */
-  holdBlur?: (event: FocusEvent<HTMLInputElement>) => boolean;
-  id: string;
-  label: string;
-  initial: string;
-  placeholder: string;
-  onCommit: (text: string) => Promise<Committed>;
-  onEnter: () => void;
-}) {
-  const [draft, setDraft] = useState(initial);
-  const committed = useRef(initial);
-  // When the saved name changes (a commit landed, or the slot was cleared),
-  // show it. The input stays mounted so it keeps focus.
-  const [shown, setShown] = useState(initial);
-  if (initial !== shown) {
-    setShown(initial);
-    setDraft(initial);
-  }
-  useEffect(() => {
-    committed.current = initial;
-  }, [initial]);
-
-  function commit() {
-    if (draft === committed.current) return;
-    const previous = committed.current;
-    committed.current = draft;
-    const sent = draft;
-    void onCommit(sent).then((result) => {
-      if (result === null) {
-        committed.current = previous;
-        return;
-      }
-      // Retyping a stored name in another case or punctuation keeps the stored
-      // name, which may equal what is already shown as saved: show it, unless
-      // the user has typed on since.
-      const stored = result.name;
-      if (stored === undefined || committed.current !== sent) return;
-      committed.current = stored;
-      setDraft((current) => (current === sent ? stored : current));
-    });
-  }
-
-  useImperativeHandle(handle, () => ({
-    takeDraft() {
-      if (draft === committed.current) return undefined;
-      if (isRecipeLink(draft)) {
-        commit();
-        return undefined;
-      }
-      const previous = committed.current;
-      committed.current = draft;
-      return { text: draft, restore: () => { committed.current = previous; } };
-    },
-    flush: commit,
-  }));
-
-  return (
-    <Input
-      id={id}
-      aria-label={label}
-      value={draft}
-      placeholder={placeholder}
-      autoComplete="off"
-      enterKeyHint="next"
-      list="planner-suggestions"
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={(event) => {
-        if (!holdBlur?.(event)) commit();
-      }}
-      onKeyDown={(event) => {
-        if (event.key !== "Enter") return;
-        event.preventDefault();
-        commit();
-        onEnter();
-      }}
-    />
   );
 }
 
@@ -369,6 +298,7 @@ function LeftoversBody({
   onChoose,
   onCommitOther,
   onEnter,
+  meals,
 }: {
   slot: SlotView;
   slots: SlotView[];
@@ -377,6 +307,7 @@ function LeftoversBody({
   onChoose: (from: SlotRef | "other") => void;
   onCommitOther: (text: string) => Promise<Committed>;
   onEnter: () => void;
+  meals: readonly string[];
 }) {
   const choices = leftoverChoices(slots, slot);
   const resolved = resolveLeftover(slots, slot);
@@ -409,6 +340,8 @@ function LeftoversBody({
           placeholder="What are the leftovers?"
           onCommit={onCommitOther}
           onEnter={onEnter}
+          options={(text) => mealOptions(meals, text)}
+          onPick={(option) => onCommitOther(option.label)}
         />
       )}
     </>
@@ -419,10 +352,14 @@ function SlotMeta({
   slot,
   pending,
   onShowImport,
+  onChooseRecipe,
+  onImportLink,
 }: {
   slot: SlotView | undefined;
   pending: boolean;
   onShowImport: (importId: Id<"recipeImports">) => void;
+  onChooseRecipe: () => void;
+  onImportLink: () => void;
 }) {
   const recipe = slot?.type === "cook" ? slot.recipe : undefined;
   if (pending) return <p className="planner-meta">Saving…</p>;
@@ -441,10 +378,26 @@ function SlotMeta({
     }
     return <p className="planner-meta">Reading the recipe…</p>;
   }
-  if (!slot || !recipe) return null;
+  if (!slot || slot.type !== "cook") return null;
+  if (!recipe) {
+    if (!slot.name) return null;
+    // A typed name only: grocery lists and nutrition count only slots with a recipe.
+    return (
+      <p className="planner-meta">
+        <span className="planner-quiet">No recipe attached</span>
+        <button type="button" className="planner-link-button" onClick={onChooseRecipe}>Choose recipe</button>
+        <button type="button" className="planner-link-button" onClick={onImportLink}>Import from link</button>
+      </p>
+    );
+  }
   if (!recipe.available) {
     const removed = recipe.title === "" ? "This recipe" : recipe.title;
-    return <p className="planner-meta"><span className="planner-warn">{removed} was removed from your Recipe Book</span></p>;
+    return (
+      <p className="planner-meta">
+        <span className="planner-warn">{removed} was removed from your Recipe Book</span>
+        <button type="button" className="planner-link-button" onClick={onChooseRecipe}>Choose recipe</button>
+      </p>
+    );
   }
   const count = recipe.ingredientCount;
   return (
@@ -453,6 +406,7 @@ function SlotMeta({
       {count === 0
         ? <span className="planner-warn">No ingredients yet</span>
         : <span>{count}{recipe.moreIngredients ? "+" : ""} {count === 1 && !recipe.moreIngredients ? "ingredient" : "ingredients"}</span>}
+      <button type="button" className="planner-link-button" aria-label={`Change the recipe for ${slot.name}`} onClick={onChooseRecipe}>Change</button>
     </p>
   );
 }

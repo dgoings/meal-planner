@@ -5,7 +5,9 @@ import {
   mutation,
   type MutationCtx,
 } from "./_generated/server";
+import { isRecipeLink } from "./lib/plannerRules";
 import { ingredientCatalogEntry, insertUserRecipe } from "./lib/userRecipes";
+import { queueRecipeSource, startRecipeIngestion, type StartIngestion } from "./recipeIngestion";
 
 const instructionValidator = v.object({
   position: v.number(),
@@ -537,6 +539,149 @@ export const removeCard = mutation({
     const user = await ctx.db.get(userId);
     if (user?.currentRecipeId === recipeId) {
       await ctx.db.patch(userId, { currentRecipeId: undefined, updatedAt: now });
+    }
+    return null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Filling an existing recipe from a web link
+
+/**
+ * Starts the usual import of `sourceUrl` (a draft recipe the user previews)
+ * for filling the owner's recipe `recipeId`. Nothing changes on that recipe
+ * until `fillFromImport`. Without a usable AI key this throws
+ * ConvexError({ code }), as every import the user waits on does.
+ */
+export async function startRecipeFill(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  args: { recipeId: Id<"recipes">; sourceUrl: string },
+  startIngestion: StartIngestion = startRecipeIngestion,
+): Promise<Id<"recipeImports">> {
+  await requireOwnedRecipe(ctx, userId, args.recipeId);
+  const sourceUrl = args.sourceUrl.trim();
+  if (!isRecipeLink(sourceUrl)) throw new Error("Paste a recipe link that starts with http:// or https://");
+  const { importId } = await queueRecipeSource(
+    ctx,
+    { userId, sourceUrl, sourceKind: "direct", whenAiUnavailable: "throw" },
+    startIngestion,
+  );
+  return importId;
+}
+
+export const importIntoRecipe = mutation({
+  args: { recipeId: v.id("recipes"), sourceUrl: v.string() },
+  returns: v.id("recipeImports"),
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    return await startRecipeFill(ctx, userId, args);
+  },
+});
+
+const FILL_INGREDIENT_LIMIT = 200;
+
+/**
+ * Copies a finished import's recipe into the owner's existing recipe, which
+ * keeps its id (and so its planner slots, notes and favourite): ingredients,
+ * instructions, times, servings, image and source; the title only with
+ * `useImportedTitle`. A recipe that already has ingredients or instructions
+ * is replaced only with `replaceExisting`. The import's draft is then
+ * discarded unless the user saved it to their Recipe Book themselves.
+ */
+export const fillFromImport = mutation({
+  args: {
+    recipeId: v.id("recipes"),
+    importId: v.id("recipeImports"),
+    useImportedTitle: v.boolean(),
+    replaceExisting: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const target = await requireOwnedRecipe(ctx, userId, args.recipeId);
+    const recipeImport = await ctx.db.get(args.importId);
+    if (recipeImport === null || recipeImport.requestedBy !== userId) {
+      throw new Error("Recipe import was not found");
+    }
+    if (
+      recipeImport.recipeId === undefined ||
+      (recipeImport.status !== "completed" && recipeImport.status !== "needs_review")
+    ) {
+      throw new Error("The imported recipe is not ready yet");
+    }
+    if (recipeImport.recipeId === target._id) throw new Error("A recipe can’t be filled from itself");
+    const source = await ctx.db.get(recipeImport.recipeId);
+    if (source === null || source.deletedAt !== undefined) {
+      throw new Error("The imported recipe was removed");
+    }
+
+    const current = await ctx.db
+      .query("recipeIngredients")
+      .withIndex("by_recipe", (q) => q.eq("recipeId", target._id))
+      .take(FILL_INGREDIENT_LIMIT + 1);
+    if (!args.replaceExisting && (current.length > 0 || target.instructions.length > 0)) {
+      throw new Error("This recipe already has ingredients or instructions");
+    }
+    const incoming = await ctx.db
+      .query("recipeIngredients")
+      .withIndex("by_recipe_and_position", (q) => q.eq("recipeId", source._id))
+      .take(FILL_INGREDIENT_LIMIT);
+
+    for (const ingredient of current) {
+      const sources = await ctx.db
+        .query("groceryListItemSources")
+        .withIndex("by_recipe_ingredient", (q) => q.eq("recipeIngredientId", ingredient._id))
+        .take(100);
+      for (const item of sources) await ctx.db.delete(item._id);
+      await ctx.db.delete(ingredient._id);
+    }
+    for (const ingredient of incoming) {
+      const { _id, _creationTime, recipeId, ...fields } = ingredient;
+      void _id;
+      void _creationTime;
+      void recipeId;
+      await ctx.db.insert("recipeIngredients", { ...fields, recipeId: target._id });
+    }
+
+    const now = Date.now();
+    const patch: Partial<Doc<"recipes">> = {
+      sourceUrl: source.sourceUrl,
+      normalizedSourceUrl: source.normalizedSourceUrl,
+      sourceSite: source.sourceSite,
+      sourceAuthor: source.sourceAuthor,
+      instructions: source.instructions,
+      servings: source.servings,
+      yieldText: source.yieldText,
+      prepTimeMinutes: source.prepTimeMinutes,
+      cookTimeMinutes: source.cookTimeMinutes,
+      totalTimeMinutes: source.totalTimeMinutes,
+      updatedAt: now,
+    };
+    if (source.imageStorageId !== undefined || source.imageUrl !== undefined) {
+      patch.imageStorageId = source.imageStorageId;
+      patch.imageUrl = source.imageUrl;
+    }
+    if (args.useImportedTitle) patch.title = source.title;
+    if (!target.description && source.description) patch.description = source.description;
+    if (target.categories.length === 0) patch.categories = source.categories;
+    if (target.cuisines.length === 0) patch.cuisines = source.cuisines;
+    if (target.keywords.length === 0) patch.keywords = source.keywords;
+    if (source.nutrition !== undefined) patch.nutrition = source.nutrition;
+    await ctx.db.patch(target._id, patch);
+
+    // The draft only existed to preview this import; one the user chose to
+    // keep in their book stays.
+    const keptDraft = await ctx.db
+      .query("savedRecipes")
+      .withIndex("by_user_and_recipe", (q) => q.eq("userId", userId).eq("recipeId", source._id))
+      .unique();
+    if (keptDraft === null) {
+      await ctx.db.patch(source._id, { deletedAt: now, imageStorageId: undefined, updatedAt: now });
+      const user = await ctx.db.get(userId);
+      if (user?.currentRecipeId === source._id) {
+        await ctx.db.patch(userId, { currentRecipeId: target._id, updatedAt: now });
+      }
     }
     return null;
   },

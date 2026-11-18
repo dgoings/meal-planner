@@ -13,6 +13,18 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { groceryCategoryOrder } from "@/convex/lib/groceryCategory";
 import type { GroceryItem } from "@/lib/data/types";
 
+function sameItem(first: GroceryItem, second: GroceryItem) {
+  return (
+    first.name === second.name &&
+    first.quantity === second.quantity &&
+    first.unit === second.unit &&
+    first.category === second.category &&
+    first.checked === second.checked &&
+    first.source === second.source &&
+    first.planAmount === second.planAmount
+  );
+}
+
 export function GroceryListEditor({
   initialItems,
   initialName = "Untitled grocery list",
@@ -21,6 +33,7 @@ export function GroceryListEditor({
   canSave = true,
   initialSaveState = "idle",
   onSaved,
+  sourceLabel = "From",
 }: {
   initialItems: GroceryItem[];
   initialName?: string;
@@ -29,6 +42,8 @@ export function GroceryListEditor({
   canSave?: boolean;
   initialSaveState?: "idle" | "saved";
   onSaved?: () => void;
+  /** How an item's recipes are introduced: "From Chili", or "For Chili" on a planner week's list. */
+  sourceLabel?: "From" | "For";
 }) {
   const saveList = useMutation(api.groceryLists.save);
   const updateSavedItem = useMutation(api.groceryLists.updateItem);
@@ -62,7 +77,12 @@ export function GroceryListEditor({
         .map((item) => {
           const previous = previousById.get(item.id);
           const next = nextById.get(item.id);
-          return previous && next && previous.checked !== next.checked
+          if (!previous || !next) return item;
+          // A row not edited here takes the server's version whole (for
+          // example new amounts from "Update from plan"); an edited row keeps
+          // its local edits and takes only the check mark.
+          if (sameItem(item, previous)) return next;
+          return previous.checked !== next.checked
             ? { ...item, checked: next.checked }
             : item;
         }),
@@ -197,9 +217,9 @@ export function GroceryListEditor({
     <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
       <div className="stack">
         <Card>
-          <CardContent className="stack">
+          <CardContent className="grocery-head stack">
             <label>
-              <span className="mb-2 block text-sm font-extrabold">List name</span>
+              <span className="grocery-name-label mb-2 block text-sm font-extrabold">List name</span>
               <Input
                 value={listName}
                 onChange={(event) => {
@@ -209,7 +229,7 @@ export function GroceryListEditor({
                 maxLength={200}
               />
             </label>
-            <form className="flex flex-col gap-3 sm:flex-row" onSubmit={addItem}>
+            <form className="grocery-add flex flex-col gap-3 sm:flex-row" onSubmit={addItem}>
               <label className="flex-1">
                 <span className="sr-only">Ingredient name</span>
                 <Input
@@ -234,7 +254,7 @@ export function GroceryListEditor({
               {category}
             </h2>
             <Card>
-              <CardContent className="divide-y divide-border p-0">
+              <CardContent className="grocery-items divide-y divide-border">
                 {categoryItems.map((item) => (
                   <div className="grocery-row" key={item.id}>
                     <Checkbox
@@ -254,6 +274,7 @@ export function GroceryListEditor({
                     />
                     <Input
                       className="quantity-input"
+                      inputMode="decimal"
                       value={item.quantity}
                       onChange={(event) =>
                         updateItem(item.id, { quantity: event.target.value })
@@ -277,8 +298,12 @@ export function GroceryListEditor({
                     >
                       <Trash2 size={17} />
                     </Button>
-                    {item.source && (
-                      <p className="item-source">From {item.source}</p>
+                    {(item.source || item.planAmount) && (
+                      <p className="item-source">
+                        {item.source && `${sourceLabel} ${item.source}`}
+                        {item.source && item.planAmount && " · "}
+                        {item.planAmount && `Plan now needs ${item.planAmount}`}
+                      </p>
                     )}
                   </div>
                 ))}
@@ -307,7 +332,11 @@ export function GroceryListEditor({
               <Button
                 className="mt-5 w-full"
                 onClick={persistList}
-                disabled={saveState === "saving" || listName.trim().length === 0}
+                disabled={
+                  saveState === "saving" ||
+                  listName.trim().length === 0 ||
+                  (!dirty && !needsInitialSave)
+                }
               >
                 <Save size={17} />
                 {saveState === "saving"

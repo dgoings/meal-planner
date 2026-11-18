@@ -21,6 +21,18 @@ export const importStatusValidator = v.union(
   v.literal("failed"),
 );
 export const leftoverFromValidator = v.union(slotRefValidator, v.literal("other"));
+/** A Cook slot a week's grocery list leaves out, and why (`convex/lib/planGrocery.ts`). */
+export const notIncludedValidator = v.object({
+  date: v.string(),
+  meal: mealValidator,
+  name: v.string(),
+  reason: v.union(
+    v.literal("no-recipe"),
+    v.literal("recipe-unavailable"),
+    v.literal("import-pending"),
+    v.literal("no-ingredients"),
+  ),
+});
 
 const slotBase = {
   plannerId: v.id("planners"),
@@ -36,6 +48,9 @@ export const planSlotValidator = v.union(
     ...slotBase,
     type: v.literal("cook"),
     recipeId: v.optional(v.id("recipes")),
+    // A typed name with no recipe attached. Typing never creates a recipe;
+    // the user attaches, creates or imports one deliberately.
+    name: v.optional(v.string()),
     // A recipe link pasted into the slot: the import the user reviews and
     // saves in the app's import flow, and a name to show until then.
     importId: v.optional(v.id("recipeImports")),
