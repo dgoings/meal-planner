@@ -235,3 +235,69 @@ describe("setType", () => {
     });
   });
 });
+
+describe("leftovers", () => {
+  const dinner = { date: "2026-11-18", meal: "dinner" } as const;
+
+  async function setup() {
+    const t = initAuthTest();
+    const user = await plannerFor(t, "ada@example.com");
+    const { as, plannerId } = user;
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-18", meal: "lunch", text: "Soup" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "dinner", text: "Curry" });
+    await as.mutation(api.planner.commitText, { plannerId, ...dinner, text: "leftovers" });
+    return { t, ...user };
+  }
+
+  it("chooses an offered source", async () => {
+    const { t, as, plannerId } = await setup();
+    expect(await slotOf(t, plannerId, dinner.date, dinner.meal)).toMatchObject({ from: { date: "2026-11-18", meal: "lunch" } });
+    await as.mutation(api.planner.setLeftoverOf, { plannerId, ...dinner, from: { date: "2026-11-16", meal: "dinner" } });
+    expect(await slotOf(t, plannerId, dinner.date, dinner.meal)).toMatchObject({ from: { date: "2026-11-16", meal: "dinner" } });
+  });
+
+  it("rejects sources that are not offered", async () => {
+    const { as, plannerId } = await setup();
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-11", meal: "dinner", text: "Old" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-19", meal: "lunch", text: "Later" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-17", meal: "lunch", text: "skip" });
+    await as.mutation(api.planner.setType, { plannerId, date: "2026-11-17", meal: "dinner", type: "cook" });
+    for (const from of [
+      { date: "2026-11-11", meal: "dinner" },
+      { date: "2026-11-19", meal: "lunch" },
+      { date: "2026-11-17", meal: "lunch" },
+      { date: "2026-11-17", meal: "dinner" },
+    ] as const) {
+      await expect(as.mutation(api.planner.setLeftoverOf, { plannerId, ...dinner, from })).rejects.toThrow(/can’t be used as leftovers/);
+    }
+  });
+
+  it("names other leftovers and keeps that name only while the slot stays other", async () => {
+    const { t, as, plannerId } = await setup();
+    await as.mutation(api.planner.setLeftoverOf, { plannerId, ...dinner, from: "other" });
+    expect(await slotOf(t, plannerId, dinner.date, dinner.meal)).toMatchObject({ from: "other" });
+
+    expect(await as.mutation(api.planner.commitOther, { plannerId, ...dinner, text: "Pizza" })).toEqual({ name: "Pizza" });
+    const named = await slotOf(t, plannerId, dinner.date, dinner.meal);
+    expect(named?.type === "left" && named.mealId).toBeTruthy();
+
+    await as.mutation(api.planner.setLeftoverOf, { plannerId, ...dinner, from: "other" });
+    expect(await slotOf(t, plannerId, dinner.date, dinner.meal)).toEqual(expect.objectContaining({ mealId: named?.type === "left" ? named.mealId : undefined }));
+
+    await as.mutation(api.planner.setLeftoverOf, { plannerId, ...dinner, from: { date: "2026-11-18", meal: "lunch" } });
+    await as.mutation(api.planner.setLeftoverOf, { plannerId, ...dinner, from: "other" });
+    const reset = await slotOf(t, plannerId, dinner.date, dinner.meal);
+    expect(reset?.type === "left" && reset.mealId).toBeFalsy();
+
+    expect(await as.mutation(api.planner.commitOther, { plannerId, ...dinner, text: "pizza" })).toEqual({ name: "Pizza" });
+    const meals = await t.run((ctx) => ctx.db.query("plannerMeals").collect());
+    expect(meals.map((meal) => meal.name)).toEqual(["Pizza"]);
+  });
+
+  it("only works on a leftovers slot", async () => {
+    const { as, plannerId } = await setup();
+    const lunch = { date: "2026-11-18", meal: "lunch" } as const;
+    await expect(as.mutation(api.planner.setLeftoverOf, { plannerId, ...lunch, from: "other" })).rejects.toThrow(/not leftovers/);
+    await expect(as.mutation(api.planner.commitOther, { plannerId, ...lunch, text: "Pizza" })).rejects.toThrow(/not leftovers/);
+  });
+});

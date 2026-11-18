@@ -10,7 +10,12 @@ import {
   type SlotLike,
   type SlotRef,
 } from "./lib/plannerSlots";
-import { mealValidator, slotTypeValidator, weekStartValidator } from "./lib/plannerValidators";
+import {
+  leftoverFromValidator,
+  mealValidator,
+  slotTypeValidator,
+  weekStartValidator,
+} from "./lib/plannerValidators";
 import { insertUserRecipe } from "./lib/userRecipes";
 
 const MAX_PEOPLE = 12;
@@ -303,5 +308,58 @@ export const commitText = mutation({
     const intent = parseSlotText(text, row?.type ?? null);
     if (intent.kind !== "set") return { type: row?.type ?? null, name: currentName };
     return await planSlot(ctx, plannerId, userId, ref, intent.type, intent.name);
+  },
+});
+
+async function requireLeftoverSlot(ctx: MutationCtx, plannerId: Id<"planners">, ref: SlotRef) {
+  const row = await slotRow(ctx, plannerId, ref);
+  if (row === null || row.type !== "left") throw new Error("Slot is not leftovers");
+  return row;
+}
+
+/** The Leftovers select: an earlier meal, or "other" (§2.3). */
+export const setLeftoverOf = mutation({
+  args: { ...slotArgs, from: leftoverFromValidator },
+  returns: v.null(),
+  handler: async (ctx, { plannerId, date, meal, from }) => {
+    const { userId } = await requirePlanner(ctx, plannerId);
+    assertDate(date);
+    const ref: SlotRef = { date, meal };
+    const row = await requireLeftoverSlot(ctx, plannerId, ref);
+    if (from === "other") {
+      // An other-leftovers name survives only if the slot was already other.
+      const mealId = row.from === "other" ? row.mealId : undefined;
+      await writeSlot(ctx, plannerId, userId, ref, { type: "left", from: "other", ...(mealId ? { mealId } : {}) });
+      return null;
+    }
+    const slots = (await loadSlots(ctx, plannerId, addDays(date, -6), date)).map(({ slot }) => slot);
+    const offered = leftoverChoices(slots, ref).some(
+      (choice) => choice.date === from.date && choice.meal === from.meal,
+    );
+    if (!offered) throw new Error("That meal can’t be used as leftovers here");
+    await writeSlot(ctx, plannerId, userId, ref, { type: "left", from });
+    return null;
+  },
+});
+
+/** Text typed into the other-leftovers input (§2.3 commitOther). */
+export const commitOther = mutation({
+  args: { ...slotArgs, text: v.string() },
+  returns: v.object({ name: v.string() }),
+  handler: async (ctx, { plannerId, date, meal, text }) => {
+    const { userId } = await requirePlanner(ctx, plannerId);
+    assertDate(date);
+    const ref: SlotRef = { date, meal };
+    const row = await requireLeftoverSlot(ctx, plannerId, ref);
+    const name = cleanName(text);
+    const currentName = await slotName(ctx, row);
+    if (row.from === "other" && currentName === name) return { name };
+    if (!name) {
+      await writeSlot(ctx, plannerId, userId, ref, { type: "left", from: "other" });
+      return { name: "" };
+    }
+    const plannerMeal = await resolvePlannerMeal(ctx, plannerId, userId, name);
+    await writeSlot(ctx, plannerId, userId, ref, { type: "left", from: "other", mealId: plannerMeal.mealId });
+    return { name: plannerMeal.name };
   },
 });
