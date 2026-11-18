@@ -10,6 +10,7 @@ import {
   mutation,
   type MutationCtx,
 } from "./_generated/server";
+import { aiErrorCodeIn } from "./lib/aiErrorCodes";
 import type { RecipeScrapePayload } from "./lib/recipeScrape";
 import { normalizeRecipeUrl } from "./lib/urls";
 
@@ -269,6 +270,9 @@ export const ingestRecipeSource = recipeIngestionWorkflow.define({
       threadId: processing.threadId,
       userId: processing.userId,
     });
+    // Handler errors end the workflow without retries; onIngestionComplete
+    // stores the code.
+    if (generated.kind === "aiFailure") throw new Error(generated.code);
     const persisted = await step.runMutation(
       internal.recipeAgentData.persistGeneratedRecipe,
       {
@@ -481,11 +485,17 @@ export const onIngestionComplete = internalMutation({
 
     const rawMessage =
       result.kind === "failed" ? result.error : "Recipe ingestion was canceled";
-    const errorMessage = rawMessage.slice(0, 500);
+    // A failure caused by the user's AI settings is stored as its bare code,
+    // and does not use up an attempt: the user can fix the key and retry.
+    const aiCode = aiErrorCodeIn(rawMessage);
+    const errorMessage = aiCode ?? rawMessage.slice(0, 500);
     const now = Date.now();
     await ctx.db.patch(context.importId, {
       status: "failed",
       errorMessage,
+      ...(aiCode === undefined
+        ? {}
+        : { attemptCount: Math.max(0, recipeImport.attemptCount - 1) }),
       finishedAt: now,
       updatedAt: now,
     });
