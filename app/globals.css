@@ -304,7 +304,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .planner-slot-skip { border-left-color: var(--planner-skip); }
 .planner-slot-label { margin: 0; color: var(--muted-foreground); font-size: .75rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .planner-types { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .25rem; }
-.planner-type { min-height: 44px; min-width: 0; border: 1px solid var(--border); border-radius: .5rem; background: var(--surface); color: var(--foreground); padding: .35rem .2rem; font-size: .8rem; font-weight: 700; cursor: pointer; }
+/* A slot too narrow for four labels in a row shows the types two by two, so no label is clipped or wrapped. */
+.planner-slot { container-type: inline-size; }
+/* Being a container makes each slot its own layer; lift the one in use so its suggestion list stays above later slots. */
+.planner-slot:focus-within { position: relative; z-index: 5; }
+@container (max-width: 19rem) { .planner-types { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.planner-type { min-height: 44px; min-width: 0; border: 1px solid var(--border); border-radius: .5rem; background: var(--surface); color: var(--foreground); padding: .35rem .2rem; font-size: .8rem; font-weight: 700; white-space: nowrap; cursor: pointer; }
 .planner-type:hover { background: var(--surface-subtle); }
 .planner-type[aria-pressed="true"] { border-width: 2px; font-weight: 800; }
 .planner-type-cook[aria-pressed="true"] { border-color: var(--planner-cook); background: var(--primary-soft); color: var(--planner-cook); }
