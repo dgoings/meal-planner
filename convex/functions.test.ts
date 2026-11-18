@@ -736,6 +736,39 @@ describe("imports without a usable AI key", () => {
     });
   });
 
+  it("reports every other AI failure on a forwarded email with its code", async () => {
+    const t = initTest();
+    const userId = await createSignedInUser(t, "Throttled");
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const importId = await ctx.db.insert("recipeImports", {
+        requestedBy: userId,
+        sourceUrl: "https://example.com/no-credit",
+        normalizedUrl: "https://example.com/no-credit",
+        sourceKind: "email",
+        status: "failed",
+        attemptCount: 0,
+        errorMessage: "ai_key_no_credit",
+        aiErrorCode: "ai_key_no_credit",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("inboundRecipeEmails", {
+        userId,
+        inboxId: "inbox-1",
+        eventId: "no-credit-event",
+        receivedAt: now,
+        linkCount: 1,
+        queuedCount: 1,
+        primaryImportId: importId,
+      });
+    });
+
+    const [email] = await sessionOf(t, userId).query(api.email.recentInboundEmails);
+    expect(email).toMatchObject({ status: "ai_failed", aiErrorCode: "ai_key_no_credit" });
+    expect(email.importId).toBeDefined();
+  });
+
   it("refuses a retry without a key before counting the attempt", async () => {
     const t = initTest();
     const userId = await createSignedInUser(t, "Retrier");

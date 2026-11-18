@@ -124,7 +124,9 @@ The frontend currently includes the following responsive, navigable flows:
   five attempts. Imports run on the user's own AI key (see
   [AI provider keys](#ai-provider-keys)): without one, Discover asks the user to
   add a key in Settings, and forwarded emails show **Needs an AI key** with
-  **Try again**.
+  **Try again**. An email whose import failed because of the user's provider
+  account (rejected key, no credit, rate limit, unknown model) shows the reason
+  and **Try again** too.
 - **Grocery lists:** list overview plus an interactive editor that can add,
   rename, check off, remove, restore, and change the quantity or unit of grocery
   items. Users can create recipe-named lists from saved recipe ingredients,

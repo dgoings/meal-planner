@@ -12,7 +12,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AI_SETTINGS_HREF } from "@/components/discovery/ai-key-required-alert";
 import { RecipePreviewModal } from "@/components/recipes/recipe-preview-modal";
-import { retryFailureMessage } from "@/lib/recipe-import-errors";
+import { recipeImportFailureMessage, retryFailureMessage } from "@/lib/recipe-import-errors";
 
 export function EmailIntake() {
   const inbox = useQuery(api.email.currentInbox);
@@ -56,6 +56,7 @@ export function EmailIntake() {
     no_links: "No recipe links found",
     already_imported: "Recipes already imported",
     needs_ai_key: "Needs an AI key",
+    ai_failed: "AI provider problem",
   } as const;
   const activeEmail = recentEmails?.find((email) => email.status === "processing");
 
@@ -138,6 +139,11 @@ export function EmailIntake() {
                     <p className="mt-1 truncate text-sm text-muted-foreground">
                       {email.sender ?? "Unknown sender"} · <time dateTime={new Date(email.receivedAt).toISOString()}>{new Date(email.receivedAt).toLocaleString()}</time>
                     </p>
+                    {email.aiErrorCode !== undefined && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {recipeImportFailureMessage(undefined, email.aiErrorCode)}
+                      </p>
+                    )}
                     {retryFailure?.emailId === email._id && (
                       <p className="mt-1 text-sm font-bold text-red-700" role="alert">{retryFailure.message}</p>
                     )}
@@ -147,7 +153,7 @@ export function EmailIntake() {
                       <span className="rounded-full bg-surface-subtle px-3 py-1 text-xs font-bold text-foreground">{statusLabels[email.status]}</span>
                     )}
                     <span className="text-xs text-muted-foreground">{email.linkCount} {email.linkCount === 1 ? "link" : "links"}</span>
-                    {email.status === "needs_ai_key" && email.importId && (
+                    {(email.status === "needs_ai_key" || email.status === "ai_failed") && email.importId && (
                       <Button size="sm" variant="secondary" onClick={() => void retry(email._id, email.importId!)}>
                         <RotateCcw size={16} /> Try again
                       </Button>

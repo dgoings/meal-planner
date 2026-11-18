@@ -12,9 +12,10 @@ const mocks = vi.hoisted(() => ({
     sender?: string;
     receivedAt: number;
     linkCount: number;
-    status: "imported" | "processing" | "failed" | "already_imported" | "needs_ai_key";
+    status: "imported" | "processing" | "failed" | "already_imported" | "needs_ai_key" | "ai_failed";
     recipeId?: string;
     importId?: string;
+    aiErrorCode?: string;
   }>,
   aiSettings: { encryptionAvailable: true, settings: { provider: "anthropic" } } as
     | undefined
@@ -187,6 +188,7 @@ describe("EmailIntake", () => {
       linkCount: 1,
       status: "needs_ai_key",
       importId: "import-1",
+      aiErrorCode: "ai_key_missing",
     }];
     const user = userEvent.setup();
     render(<EmailIntake />);
@@ -208,5 +210,28 @@ describe("EmailIntake", () => {
     mocks.aiSettings = { encryptionAvailable: true, settings: null };
     rerender(<EmailIntake />);
     expect(screen.getByText(banner)).toBeInTheDocument();
+  });
+
+  it("explains any other AI failure on an email and offers a retry", async () => {
+    mocks.recentEmails = [{
+      _id: "email-2",
+      subject: "Stew",
+      receivedAt: 0,
+      linkCount: 1,
+      status: "ai_failed",
+      importId: "import-2",
+      aiErrorCode: "ai_key_no_credit",
+    }];
+    const user = userEvent.setup();
+    render(<EmailIntake />);
+
+    expect(screen.getByText("AI provider problem")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Your AI provider account is out of credit or over its spending limit. Add credit with your provider, then try again.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(mocks.retryImport).toHaveBeenCalledWith({ importId: "import-2" });
   });
 });

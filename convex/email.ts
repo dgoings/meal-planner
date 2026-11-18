@@ -24,6 +24,7 @@ const inboundEmailStatus = v.union(
   v.literal("no_links"),
   v.literal("already_imported"),
   v.literal("needs_ai_key"),
+  v.literal("ai_failed"),
 );
 
 function boundedField(value: unknown, key: string, maxLength: number) {
@@ -69,6 +70,8 @@ export const recentInboundEmails = query({
       recipeId: v.optional(v.id("recipes")),
       // The failed import behind this email, for retrying it.
       importId: v.optional(v.id("recipeImports")),
+      // Why that import failed, when the user's AI settings caused it.
+      aiErrorCode: v.optional(aiErrorCodeValidator),
     }),
   ),
   handler: async (ctx) => {
@@ -106,7 +109,8 @@ export const recentInboundEmails = query({
           | "failed"
           | "no_links"
           | "already_imported"
-          | "needs_ai_key";
+          | "needs_ai_key"
+          | "ai_failed";
 
         const aiCode = ownedPrimaryImport?.aiErrorCode;
         if (email.linkCount === 0) status = "no_links";
@@ -114,6 +118,7 @@ export const recentInboundEmails = query({
           ownedPrimaryImport?.status === "failed" &&
           (aiCode === "ai_key_missing" || aiCode === "ai_key_unreadable")
         ) status = "needs_ai_key";
+        else if (ownedPrimaryImport?.status === "failed" && aiCode !== undefined) status = "ai_failed";
         else if (ownedPrimaryImport?.status === "failed") status = "failed";
         else if (ownedPrimaryImport !== null && !["completed", "needs_review"].includes(ownedPrimaryImport.status)) status = "processing";
         else if (email.queuedCount === 0) status = "already_imported";
@@ -131,6 +136,7 @@ export const recentInboundEmails = query({
           status,
           recipeId,
           importId: ownedPrimaryImport?.status === "failed" ? ownedPrimaryImport._id : undefined,
+          aiErrorCode: ownedPrimaryImport?.status === "failed" ? aiCode : undefined,
         };
       }),
     );
