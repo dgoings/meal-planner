@@ -6,6 +6,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { planWeekCopy, type CopySlot, type CopyValue } from "./lib/plannerCopy";
 import { cleanName } from "./lib/plannerRules";
 import { addDays, isDateKey } from "./lib/plannerSlots";
+import { describeChange } from "./lib/slotHistory";
 import { cookRecipe, requirePlanner, writeSlot } from "./planner";
 
 /** Weeks back that Copy from… looks through for planned weeks. */
@@ -75,6 +76,8 @@ export const copyWeek = mutation({
       mode,
     });
     for (const write of writes) await writeSlot(ctx, plannerId, userId, write.ref, write.value);
+    // Undo puts back every slot the copy touched, as one step.
+    if (writes.length > 0) await describeChange(ctx, { kind: "copy", fromStart, toStart });
     return { written: writes.length };
   },
 });

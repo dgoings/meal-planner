@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { formatWeekRange } from "@/convex/lib/plannerSlots";
+import { usePlannerUndo } from "./planner-undo";
 
 type WeekChoice = FunctionReturnType<typeof api.plannerCopy.recentWeeks>[number];
 type Mode = "fill" | "replace";
@@ -30,15 +31,13 @@ export function weekChoiceSummary(week: WeekChoice) {
 /**
  * Copy from…: fills the shown week from an earlier one. When the week
  * already has planned slots, asks whether to fill only the empty ones or
- * replace everything. `onCopy` runs the change, so the planner can offer
- * to undo it.
+ * replace everything. The copy undoes as one step.
  */
 export function CopyWeekButton({
   plannerId,
   start,
   planned,
   disabled,
-  onCopy,
 }: {
   /** Undefined until the planner has loaded. */
   plannerId: Id<"planners"> | undefined;
@@ -46,7 +45,6 @@ export function CopyWeekButton({
   /** Slots already planned in the shown week. */
   planned: number;
   disabled?: boolean;
-  onCopy?: (copy: () => Promise<unknown>) => Promise<unknown>;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -67,7 +65,6 @@ export function CopyWeekButton({
               plannerId={plannerId}
               start={start}
               planned={planned}
-              onCopy={onCopy}
               onDone={() => setOpen(false)}
             />
           )}
@@ -81,15 +78,14 @@ function CopyWeekChoices({
   plannerId,
   start,
   planned,
-  onCopy,
   onDone,
 }: {
   plannerId: Id<"planners">;
   start: string;
   planned: number;
-  onCopy?: (copy: () => Promise<unknown>) => Promise<unknown>;
   onDone: () => void;
 }) {
+  const { expectChange } = usePlannerUndo();
   const weeks = useQuery(api.plannerCopy.recentWeeks, { plannerId, start });
   const copyWeek = useMutation(api.plannerCopy.copyWeek);
   const [chosen, setChosen] = useState<WeekChoice | null>(null);
@@ -99,9 +95,9 @@ function CopyWeekChoices({
   async function copy(week: WeekChoice, mode: Mode) {
     setBusy(true);
     setFailed(false);
-    const change = () => copyWeek({ plannerId, fromStart: week.start, toStart: start, mode });
+    expectChange();
     try {
-      await (onCopy ? onCopy(change) : change());
+      await copyWeek({ plannerId, fromStart: week.start, toStart: start, mode });
       onDone();
     } catch {
       setFailed(true);

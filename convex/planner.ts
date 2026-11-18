@@ -27,6 +27,7 @@ import {
   slotTypeValidator,
   weekStartValidator,
 } from "./lib/plannerValidators";
+import { noteCreatedRecipe, rememberSlot } from "./lib/slotHistory";
 import { insertUserRecipe } from "./lib/userRecipes";
 import { canAccessRecipe } from "./recipes";
 import { queueRecipeSource, startRecipeIngestion, type StartIngestion } from "./recipeIngestion";
@@ -236,6 +237,8 @@ export async function writeSlot(
   value: SlotValue | null,
 ) {
   const existing = await slotRow(ctx, plannerId, ref);
+  if (value === null && existing === null) return;
+  await rememberSlot(ctx, plannerId, userId, ref, existing);
   if (value === null) {
     if (existing !== null) await ctx.db.delete(existing._id);
     return;
@@ -427,6 +430,7 @@ export const createRecipeForSlot = mutation({
     if (!name) throw new Error("A recipe needs a name");
     const recipeId = await insertUserRecipe(ctx, userId, { title: name, ingredients: [], instructions: [] });
     await writeSlot(ctx, plannerId, userId, { date, meal }, { type: "cook", recipeId });
+    await noteCreatedRecipe(ctx, recipeId, name);
     return { recipeId, name };
   },
 });

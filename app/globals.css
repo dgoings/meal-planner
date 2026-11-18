@@ -269,6 +269,19 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .planner-copy-week:hover:not(:disabled) { background: var(--surface-subtle); }
 .planner-copy-week:disabled { cursor: not-allowed; opacity: .6; }
 .planner-copy-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* Undo: a snackbar above the phone's bottom nav (and its safe area), bottom centre on wider screens. */
+.planner-undo-region { position: fixed; right: max(1rem, env(safe-area-inset-right)); bottom: calc(52px + max(.4rem, env(safe-area-inset-bottom)) + .5rem); left: max(1rem, env(safe-area-inset-left)); z-index: 46; display: flex; justify-content: center; pointer-events: none; }
+.planner-undo { display: flex; align-items: center; gap: .5rem; pointer-events: auto; }
+.planner-undo.open { width: min(100%, 30rem); border-radius: .75rem; background: #1f261e; color: white; padding: .35rem .35rem .35rem 1rem; box-shadow: 0 12px 28px rgb(28 35 27 / .28); }
+.planner-undo-message { flex: 1; font-size: .9rem; font-weight: 600; line-height: 1.35; }
+.planner-undo-action { min-height: 44px; border: 0; border-radius: .5rem; background: none; color: #b9e5a8; padding: 0 .75rem; font-weight: 800; cursor: pointer; }
+.planner-undo-action:hover:not(:disabled) { background: rgb(255 255 255 / .1); }
+.planner-undo-dismiss { display: grid; width: 44px; height: 44px; flex: none; place-items: center; border: 0; border-radius: .5rem; background: none; color: white; cursor: pointer; }
+.planner-undo-dismiss:hover { background: rgb(255 255 255 / .1); }
+.planner-undo :focus-visible { outline-color: #b9e5a8; }
+@media (min-width: 768px) {
+  .planner-undo-region { bottom: max(1.5rem, env(safe-area-inset-bottom)); }
+}
 .planner-range { min-width: 8.5rem; margin: 0; text-align: center; font-size: 1.05rem; font-weight: 800; letter-spacing: -.01em; }
 .planner-loading { display: grid; gap: .75rem; }
 .planner-strip { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0; padding: 0; list-style: none; }

@@ -20,6 +20,7 @@ import {
 import { CopyWeekButton } from "./copy-week-dialog";
 import { DayCard, dayCardId } from "./day-card";
 import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
+import { PlannerUndoProvider } from "./planner-undo";
 import { PlannerPickerProvider } from "./slot-combobox";
 import { WeekGroceryList } from "./week-grocery-list";
 import { WeekStrip } from "./week-strip";
@@ -65,7 +66,17 @@ function measureToolbar(toolbar: HTMLDivElement | null) {
   return () => observer.disconnect();
 }
 
+/** The planner, with Undo for its slot changes around everything that makes them. */
 export function PlannerWeek() {
+  const planner = useQuery(api.planner.mine, {});
+  return (
+    <PlannerUndoProvider plannerId={planner?.plannerId}>
+      <PlannerWeekView />
+    </PlannerUndoProvider>
+  );
+}
+
+function PlannerWeekView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const today = useToday();

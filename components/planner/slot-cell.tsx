@@ -19,6 +19,7 @@ import {
 import { announceRecipeImport } from "@/lib/recipe-import-events";
 import { cn } from "@/lib/utils";
 import { mainOptions, mealOptions, type PickerOption } from "./picker-options";
+import { usePlannerUndo } from "./planner-undo";
 import { SlotInput, usePlannerPicker, type Committed, type SlotInputHandle } from "./slot-combobox";
 import { SlotImportDialog } from "./slot-import-dialog";
 import { SLOT_TYPES, type SlotView } from "./types";
@@ -51,6 +52,7 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
   const attachRecipe = useMutation(api.planner.attachRecipe);
   const createRecipeForSlot = useMutation(api.planner.createRecipeForSlot);
   const picker = usePlannerPicker();
+  const undo = usePlannerUndo();
   const [importOpen, setImportOpen] = useState(false);
   const [pending, setPending] = useState(0);
   const [failed, setFailed] = useState(false);
@@ -70,6 +72,7 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
 
   /** Queues one change, tracking Saving… and the failure alert. Resolves to whether it saved. */
   function run(change: () => Promise<unknown>) {
+    undo.expectChange();
     setPending((count) => count + 1);
     const attempt = queue.current.then(async () => {
       setFailed(false);

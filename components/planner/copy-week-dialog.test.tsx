@@ -58,15 +58,13 @@ describe("CopyWeekButton", () => {
 
   it("asks before copying into a planned week", async () => {
     const user = userEvent.setup();
-    const onCopy = vi.fn((copy: () => Promise<unknown>) => copy());
-    render(<CopyWeekButton plannerId={plannerId} start="2026-11-16" planned={2} onCopy={onCopy} />);
+    render(<CopyWeekButton plannerId={plannerId} start="2026-11-16" planned={2} />);
     await user.click(screen.getByRole("button", { name: "Copy from…" }));
     await user.click(screen.getAllByRole("button", { name: /Nov 9 – 15/ })[0]);
     expect(screen.getByText(/already has 2 meals planned/)).toBeInTheDocument();
     expect(mocks.mutations["plannerCopy:copyWeek"]).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Replace everything" }));
-    expect(onCopy).toHaveBeenCalledTimes(1);
     expect(mocks.mutations["plannerCopy:copyWeek"]).toHaveBeenCalledWith(expect.objectContaining({ mode: "replace" }));
   });
 
