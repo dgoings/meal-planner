@@ -1,6 +1,10 @@
 import { APICallError } from "@ai-sdk/provider";
 import { describe, expect, it } from "vitest";
-import { classifyAiCallError, classifyProviderResponse } from "./aiErrors";
+import {
+  classifyAiCallError,
+  classifyProviderResponse,
+  extractionFailureDecision,
+} from "./aiErrors";
 
 function apiError(statusCode: number, responseBody: string) {
   return new APICallError({
@@ -99,5 +103,36 @@ describe("classifyAiCallError", () => {
     expect(classifyAiCallError(new Error("network down"))).toBeUndefined();
     expect(classifyAiCallError(apiError(503, "unavailable"))).toBeUndefined();
     expect(classifyAiCallError("text")).toBeUndefined();
+  });
+});
+
+describe("extractionFailureDecision", () => {
+  it("ends the import for failures a retry cannot fix", () => {
+    expect(extractionFailureDecision(apiError(401, "{}"))).toEqual({
+      kind: "aiFailure",
+      code: "ai_key_invalid",
+    });
+    expect(
+      extractionFailureDecision(apiError(429, `{"error":{"code":"insufficient_quota"}}`)),
+    ).toEqual({ kind: "aiFailure", code: "ai_key_no_credit" });
+  });
+
+  it("retries a plain rate limit and remembers that it was one", () => {
+    const limited = apiError(429, `{"type":"error","error":{"type":"rate_limit_error"}}`);
+    expect(extractionFailureDecision({ name: "AI_RetryError", lastError: limited })).toEqual({
+      kind: "retry",
+      rateLimited: true,
+    });
+  });
+
+  it("retries transient and unknown errors", () => {
+    expect(extractionFailureDecision(apiError(500, "oops"))).toEqual({
+      kind: "retry",
+      rateLimited: false,
+    });
+    expect(extractionFailureDecision(new Error("socket hang up"))).toEqual({
+      kind: "retry",
+      rateLimited: false,
+    });
   });
 });

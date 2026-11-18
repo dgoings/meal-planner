@@ -9,7 +9,7 @@ import { z } from "zod";
 import { components, internal } from "./_generated/api";
 import { env, internalAction } from "./_generated/server";
 import type { AiErrorCode } from "./lib/aiErrorCodes";
-import { classifyAiCallError } from "./lib/aiErrors";
+import { extractionFailureDecision } from "./lib/aiErrors";
 import { aiModelLabel, type AiModelConfig } from "./lib/aiModel";
 import { aiErrorCodeValidator } from "./lib/aiValidators";
 import { GROCERY_CATEGORIES } from "./lib/groceryCategory";
@@ -201,8 +201,12 @@ ${input.markdown.slice(0, MAX_AGENT_MARKDOWN_CHARACTERS)}
 </SOURCE_MARKDOWN>`,
       });
     } catch (error) {
-      const code = classifyAiCallError(error);
-      if (code !== undefined) return { kind: "aiFailure", code };
+      const decision = extractionFailureDecision(error);
+      if (decision.kind === "aiFailure") return decision;
+      await ctx.runMutation(internal.recipeIngestion.noteExtractionError, {
+        importId,
+        rateLimited: decision.rateLimited,
+      });
       throw error;
     }
     const extraction: RecipeExtraction = result.object;

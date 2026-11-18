@@ -53,6 +53,7 @@ export const ensureProcessingThread = internalMutation({
       status: recipeImport.recipeId === undefined ? "processing" : recipeImport.status,
       errorMessage: undefined,
       aiErrorCode: undefined,
+      extractionRateLimited: undefined,
       updatedAt: Date.now(),
     });
     return { threadId, userId: recipeImport.requestedBy };

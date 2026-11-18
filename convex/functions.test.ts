@@ -1242,6 +1242,39 @@ describe("recipe scrape persistence", () => {
     });
   });
 
+  it("ends with the rate-limit message only when the last extraction attempt was rate limited", async () => {
+    const t = initTest();
+    const importId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("recipeImports", {
+        sourceUrl: "https://example.com/limited",
+        normalizedUrl: "https://example.com/limited",
+        sourceKind: "direct",
+        status: "processing",
+        attemptCount: 1,
+        workflowId: "workflow-limited",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    await t.mutation(internal.recipeIngestion.noteExtractionError, { importId, rateLimited: true });
+    await t.mutation(internal.recipeIngestion.noteExtractionError, { importId, rateLimited: false });
+    expect(await t.mutation(internal.recipeIngestion.endIfRateLimited, { importId })).toBe(false);
+    expect(await t.run(async (ctx) => ctx.db.get(importId))).toMatchObject({
+      status: "processing",
+      attemptCount: 1,
+    });
+
+    await t.mutation(internal.recipeIngestion.noteExtractionError, { importId, rateLimited: true });
+    expect(await t.mutation(internal.recipeIngestion.endIfRateLimited, { importId })).toBe(true);
+    expect(await t.run(async (ctx) => ctx.db.get(importId))).toMatchObject({
+      status: "failed",
+      aiErrorCode: "ai_rate_limited",
+      attemptCount: 0,
+    });
+  });
+
   it("never reads an AI failure out of an error message", async () => {
     const t = initTest();
     const importId = await t.run(async (ctx) => {

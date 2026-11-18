@@ -136,6 +136,8 @@ export default defineSchema({
     // Set only by server code that knows the failure came from the user's AI
     // settings or provider account, never inferred from an error message.
     aiErrorCode: v.optional(aiErrorCodeValidator),
+    // Whether the latest failed extraction attempt was a provider rate limit.
+    extractionRateLimited: v.optional(v.boolean()),
     sourceMessageId: v.optional(v.string()),
     sourceEventId: v.optional(v.string()),
     sourceSubject: v.optional(v.string()),

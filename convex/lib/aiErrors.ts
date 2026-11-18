@@ -70,3 +70,20 @@ export function classifyAiCallError(error: unknown): AiErrorCode | undefined {
   }
   return undefined;
 }
+
+export type ExtractionFailureDecision =
+  | { kind: "aiFailure"; code: AiErrorCode }
+  | { kind: "retry"; rateLimited: boolean };
+
+/**
+ * What recipe extraction does with an error from the model call: end the
+ * import now for failures a retry cannot fix, or rethrow so the workflow's
+ * backoff retries it. A plain rate limit is retried; the workflow ends with
+ * the rate-limit message only when the last retry was rate limited too.
+ */
+export function extractionFailureDecision(error: unknown): ExtractionFailureDecision {
+  const code = classifyAiCallError(error);
+  if (code === "ai_rate_limited") return { kind: "retry", rateLimited: true };
+  if (code !== undefined) return { kind: "aiFailure", code };
+  return { kind: "retry", rateLimited: false };
+}

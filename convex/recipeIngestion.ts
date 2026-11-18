@@ -2,7 +2,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { WorkflowManager } from "@convex-dev/workflow";
 import { ConvexError, v } from "convex/values";
 import { components, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalAction,
   internalMutation,
@@ -11,6 +11,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { aiReadiness, type AiReadiness } from "./aiSettings";
+import type { AiErrorCode } from "./lib/aiErrorCodes";
 import { aiErrorCodeValidator } from "./lib/aiValidators";
 import type { RecipeScrapePayload } from "./lib/recipeScrape";
 import { normalizeRecipeUrl } from "./lib/urls";
@@ -314,11 +315,21 @@ export const ingestRecipeSource = recipeIngestionWorkflow.define({
       internal.recipeAgentData.ensureProcessingThread,
       { importId },
     );
-    const generated = await step.runAction(internal.recipeAgent.extractRecipe, {
-      importId,
-      threadId: processing.threadId,
-      userId: processing.userId,
-    });
+    let generated;
+    try {
+      generated = await step.runAction(internal.recipeAgent.extractRecipe, {
+        importId,
+        threadId: processing.threadId,
+        userId: processing.userId,
+      });
+    } catch (error) {
+      // Rate limits are retried with backoff; once retries run out, a final
+      // rate limit ends the import with its own message.
+      if (await step.runMutation(internal.recipeIngestion.endIfRateLimited, { importId })) {
+        throw new Error(AI_FAILURE_RECORDED);
+      }
+      throw error;
+    }
     if (generated.kind === "aiFailure") {
       // The code is recorded by its own step, so it never has to be read back
       // out of an error message that page or URL text could have shaped.
@@ -524,6 +535,22 @@ export const agentReadyArtifact = internalQuery({
 
 const AI_FAILURE_RECORDED = "AI failure recorded";
 
+async function endWithAiFailure(
+  ctx: MutationCtx,
+  recipeImport: Doc<"recipeImports">,
+  code: AiErrorCode,
+) {
+  const now = Date.now();
+  await ctx.db.patch(recipeImport._id, {
+    status: "failed",
+    errorMessage: code,
+    aiErrorCode: code,
+    attemptCount: Math.max(0, recipeImport.attemptCount - 1),
+    finishedAt: now,
+    updatedAt: now,
+  });
+}
+
 /**
  * Ends an import with a failure caused by the user's AI settings or provider
  * account. It does not use up an attempt: the user can fix the key and retry.
@@ -533,17 +560,37 @@ export const recordAiFailure = internalMutation({
   returns: v.null(),
   handler: async (ctx, { importId, code }) => {
     const recipeImport = await ctx.db.get(importId);
-    if (recipeImport === null) return null;
-    const now = Date.now();
-    await ctx.db.patch(importId, {
-      status: "failed",
-      errorMessage: code,
-      aiErrorCode: code,
-      attemptCount: Math.max(0, recipeImport.attemptCount - 1),
-      finishedAt: now,
-      updatedAt: now,
-    });
+    if (recipeImport !== null) await endWithAiFailure(ctx, recipeImport, code);
     return null;
+  },
+});
+
+/** Remembers whether the latest failed extraction attempt was a rate limit. */
+export const noteExtractionError = internalMutation({
+  args: { importId: v.id("recipeImports"), rateLimited: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, { importId, rateLimited }) => {
+    if ((await ctx.db.get(importId)) === null) return null;
+    await ctx.db.patch(importId, { extractionRateLimited: rateLimited, updatedAt: Date.now() });
+    return null;
+  },
+});
+
+/**
+ * After extraction ran out of retries: when the last attempt was rate
+ * limited, ends the import with ai_rate_limited and returns true. Like other
+ * AI failures it gives the attempt back, because the provider throttled the
+ * user's own key after backoff was already spent; the page was never the
+ * problem, and the five-attempt cap should not block a later Try again.
+ */
+export const endIfRateLimited = internalMutation({
+  args: { importId: v.id("recipeImports") },
+  returns: v.boolean(),
+  handler: async (ctx, { importId }) => {
+    const recipeImport = await ctx.db.get(importId);
+    if (recipeImport === null || recipeImport.extractionRateLimited !== true) return false;
+    await endWithAiFailure(ctx, recipeImport, "ai_rate_limited");
+    return true;
   },
 });
 
