@@ -443,7 +443,7 @@ function SlotMeta({
       <Link href={`/app/recipe-book/${recipe.recipeId}`} aria-label={`Open the ${slot.name} recipe`}>Recipe</Link>
       {count === 0
         ? <span className="planner-warn">No ingredients yet</span>
-        : <span>{count} {count === 1 ? "ingredient" : "ingredients"}</span>}
+        : <span>{count}{recipe.moreIngredients ? "+" : ""} {count === 1 && !recipe.moreIngredients ? "ingredient" : "ingredients"}</span>}
     </p>
   );
 }

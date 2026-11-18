@@ -54,6 +54,14 @@ describe("DayCard", () => {
     expect(within(lunchOf()).getByRole("button", { name: "Cook" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("says 30+ ingredients when the count was capped", () => {
+    renderDay([
+      { date: "2026-11-18", meal: "lunch", type: "cook", name: "Feast", recipe: { recipeId, title: "Feast", ingredientCount: 30, moreIngredients: true, available: true } },
+    ]);
+    expect(within(lunchOf()).getByText("30+ ingredients")).toBeInTheDocument();
+    expect(within(lunchOf()).getByRole("button", { name: "Cook" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("warns about a recipe with no ingredients and one that is gone", () => {
     renderDay([
       { date: "2026-11-18", meal: "lunch", type: "cook", name: "Chili", recipe: { recipeId, title: "Chili", ingredientCount: 0, available: true } },

@@ -166,15 +166,20 @@ async function cookRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
   const imported = await importedRecipe(ctx, row);
   const recipeId = row.type === "cook" ? (row.recipeId ?? imported?.recipeId) : undefined;
   const recipe = recipeId === undefined ? null : await ctx.db.get(recipeId);
+  // An imported recipe's id is only set once its saved row was found, which already grants access.
   const usable =
-    recipe !== null && recipe.deletedAt === undefined && (await canAccessRecipe(ctx, row.updatedBy, recipe));
+    recipe !== null &&
+    recipe.deletedAt === undefined &&
+    (imported?.recipeId !== undefined || (await canAccessRecipe(ctx, row.updatedBy, recipe)));
   return { imported, recipeId, recipe, usable };
 }
 
+type CookRecipe = Awaited<ReturnType<typeof cookRecipe>>;
+
 /** The name a slot shows: its usable recipe's title or its planner meal's name. */
-async function slotName(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
+async function slotName(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">, cook?: CookRecipe) {
   if (row.type === "cook") {
-    const { recipeId, recipe, usable } = await cookRecipe(ctx, row);
+    const { recipeId, recipe, usable } = cook ?? (await cookRecipe(ctx, row));
     if (usable && recipe !== null) return cleanName(recipe.title);
     return recipeId === undefined ? (row.importName ?? "") : "";
   }
@@ -185,12 +190,16 @@ async function slotName(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
   return "";
 }
 
-export async function toSlotLike(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">): Promise<SlotLike> {
+export async function toSlotLike(
+  ctx: QueryCtx | MutationCtx,
+  row: Doc<"planSlots">,
+  cook?: CookRecipe,
+): Promise<SlotLike> {
   return {
     date: row.date,
     meal: row.meal,
     type: row.type,
-    name: await slotName(ctx, row),
+    name: await slotName(ctx, row, cook),
     ...(row.type === "left" ? { from: row.from } : {}),
   };
 }
@@ -210,7 +219,13 @@ export async function loadSlots(
     .take(2 * 31);
   // The index orders "dinner" before "lunch"; callers want slot order.
   rows.sort((first, second) => slotOrder(first).localeCompare(slotOrder(second)));
-  return await Promise.all(rows.map(async (row) => ({ row, slot: await toSlotLike(ctx, row) })));
+  // Each Cook row's recipe is resolved once, for its name here and the week view.
+  return await Promise.all(
+    rows.map(async (row) => {
+      const cook = row.type === "cook" ? await cookRecipe(ctx, row) : null;
+      return { row, cook, slot: await toSlotLike(ctx, row, cook ?? undefined) };
+    }),
+  );
 }
 
 async function writeSlot(
@@ -429,7 +444,8 @@ export const commitOther = mutation({
 // ---------------------------------------------------------------------------
 // Reading a week
 
-const INGREDIENT_COUNT_LIMIT = 200;
+/** Ingredients counted per Cook slot; past this the view says "30+". */
+const INGREDIENT_COUNT_LIMIT = 30;
 const SUGGESTION_LIMIT = 500;
 
 export const slotViewValidator = v.object({
@@ -438,7 +454,14 @@ export const slotViewValidator = v.object({
   type: slotTypeValidator,
   name: v.string(),
   recipe: v.optional(
-    v.object({ recipeId: v.id("recipes"), title: v.string(), ingredientCount: v.number(), available: v.boolean() }),
+    v.object({
+      recipeId: v.id("recipes"),
+      title: v.string(),
+      /** At most INGREDIENT_COUNT_LIMIT; `moreIngredients` says there are more. */
+      ingredientCount: v.number(),
+      moreIngredients: v.optional(v.literal(true)),
+      available: v.boolean(),
+    }),
   ),
   from: v.optional(v.union(slotRefValidator, v.literal("other"))),
   import: v.optional(
@@ -463,7 +486,7 @@ export const week = query({
     assertDate(start);
     const loaded = await loadSlots(ctx, plannerId, addDays(start, -6), addDays(start, 6));
     const slots = await Promise.all(
-      loaded.map(async ({ row, slot }) => {
+      loaded.map(async ({ cook, slot }) => {
         const view: typeof slotViewValidator.type = {
           date: slot.date,
           meal: slot.meal,
@@ -471,7 +494,8 @@ export const week = query({
           name: slot.name,
           ...(slot.from === undefined ? {} : { from: slot.from }),
         };
-        const { imported, recipeId, recipe, usable } = await cookRecipe(ctx, row);
+        if (cook === null) return view;
+        const { imported, recipeId, recipe, usable } = cook;
         if (imported !== null && imported.recipeId === undefined) {
           view.import = {
             importId: imported.recipeImport._id,
@@ -484,10 +508,16 @@ export const week = query({
             ? await ctx.db
                 .query("recipeIngredients")
                 .withIndex("by_recipe", (q) => q.eq("recipeId", recipeId))
-                .take(INGREDIENT_COUNT_LIMIT)
+                .take(INGREDIENT_COUNT_LIMIT + 1)
             : [];
           const title = recipe === null ? "" : cleanName(recipe.title);
-          view.recipe = { recipeId, title, ingredientCount: ingredients.length, available: usable };
+          view.recipe = {
+            recipeId,
+            title,
+            ingredientCount: Math.min(ingredients.length, INGREDIENT_COUNT_LIMIT),
+            ...(ingredients.length > INGREDIENT_COUNT_LIMIT ? { moreIngredients: true as const } : {}),
+            available: usable,
+          };
         }
         return view;
       }),

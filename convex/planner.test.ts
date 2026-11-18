@@ -371,6 +371,21 @@ describe("week and suggestions queries", () => {
 
   });
 
+  it("counts ingredients up to 30 and says when there are more, without reading them all", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    const ingredients = (count: number) => Array.from({ length: count }, (_, index) => `item ${index + 1}`);
+    await t.run((ctx) => insertUserRecipe(ctx, userId, { title: "Feast", ingredients: ingredients(45), instructions: [] }));
+    await t.run((ctx) => insertUserRecipe(ctx, userId, { title: "Thirty", ingredients: ingredients(30), instructions: [] }));
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "lunch", text: "Feast" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "dinner", text: "Thirty" });
+
+    const { slots } = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(slots[0].recipe).toMatchObject({ ingredientCount: 30, moreIngredients: true });
+    expect(slots[1].recipe).toMatchObject({ ingredientCount: 30 });
+    expect(slots[1].recipe).not.toHaveProperty("moreIngredients");
+  });
+
   it("treats a removed recipe as unlinked: no name, no leftovers source, and retyping relinks", async () => {
     const t = initAuthTest();
     const { as, plannerId } = await plannerFor(t, "ada@example.com");
