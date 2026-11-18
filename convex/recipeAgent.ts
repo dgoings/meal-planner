@@ -163,7 +163,10 @@ export const extractRecipe = internalAction({
     const resolved = await userModelConfig(settings, env.AI_KEY_ENCRYPTION_SECRET, userId);
     if (resolved.kind === "aiFailure") {
       if (resolved.code === "ai_key_unreadable" && settings !== null) {
-        await ctx.runMutation(internal.aiSettings.markUnreadable, { userId });
+        await ctx.runMutation(internal.aiSettings.markUnreadable, {
+          userId,
+          keyIv: settings.keyIv,
+        });
       }
       return resolved;
     }

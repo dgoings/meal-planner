@@ -90,8 +90,8 @@ describe("aiSettings storage", () => {
   it("upserts one row per user and clears the unreadable flag", async () => {
     const t = initAuthTest();
     const { userId, as } = await signedInUser(t, "ada@example.com");
-    await storeKey(t, userId);
-    await t.mutation(internal.aiSettings.markUnreadable, { userId });
+    const { keyIv } = await storeKey(t, userId);
+    await t.mutation(internal.aiSettings.markUnreadable, { userId, keyIv });
     expect((await as.query(api.aiSettings.get, {}))?.settings?.needsNewKey).toBe(true);
 
     await storeKey(t, userId, "openai", "gpt-x", "sk-test-9999-zzzz");
@@ -102,6 +102,20 @@ describe("aiSettings storage", () => {
     expect(await t.query(internal.aiSettings.encryptedForUser, { userId })).toMatchObject({
       provider: "openai",
       keyCiphertext: stored[0].keyCiphertext,
+    });
+  });
+
+  it("does not flag a key saved again after the failed read", async () => {
+    const t = initAuthTest();
+    const { userId, as } = await signedInUser(t, "ada@example.com");
+    const stale = await storeKey(t, userId);
+    // The user saves a new key while extraction is failing on the old one.
+    await storeKey(t, userId, "anthropic", undefined, "sk-test-9999-zzzz");
+
+    await t.mutation(internal.aiSettings.markUnreadable, { userId, keyIv: stale.keyIv });
+    expect((await as.query(api.aiSettings.get, {}))?.settings).toMatchObject({
+      keyHint: "zzzz",
+      needsNewKey: false,
     });
   });
 
@@ -133,9 +147,9 @@ describe("aiReadiness", () => {
     const readiness = () => t.run(async (ctx) => await aiReadiness(ctx, userId));
 
     expect(await readiness()).toBe("ai_key_missing");
-    await storeKey(t, userId);
+    const { keyIv } = await storeKey(t, userId);
     expect(await readiness()).toBe("ready");
-    await t.mutation(internal.aiSettings.markUnreadable, { userId });
+    await t.mutation(internal.aiSettings.markUnreadable, { userId, keyIv });
     expect(await readiness()).toBe("ai_key_unreadable");
     vi.stubEnv("AI_KEY_ENCRYPTION_SECRET", "");
     expect(await readiness()).toBe("ai_not_configured");

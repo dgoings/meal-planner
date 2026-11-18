@@ -186,13 +186,17 @@ export const callerId = internalQuery({
   handler: async (ctx) => await getAuthUserId(ctx),
 });
 
-/** Records that the saved key no longer decrypts (for example, after the secret changed). */
+/**
+ * Records that the saved key no longer decrypts (for example, after the
+ * secret changed). `keyIv` names the ciphertext that failed, so a key the
+ * user saved again in the meantime is left alone.
+ */
 export const markUnreadable = internalMutation({
-  args: { userId: v.id("users") },
+  args: { userId: v.id("users"), keyIv: v.string() },
   returns: v.null(),
-  handler: async (ctx, { userId }) => {
+  handler: async (ctx, { userId, keyIv }) => {
     const settings = await settingsFor(ctx, userId);
-    if (settings !== null && settings.unreadableAt === undefined) {
+    if (settings !== null && settings.keyIv === keyIv && settings.unreadableAt === undefined) {
       const now = Date.now();
       await ctx.db.patch(settings._id, { unreadableAt: now, updatedAt: now });
     }
