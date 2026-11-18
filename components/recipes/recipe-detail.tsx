@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, BookCheck, BookPlus, Check, Clock3, ExternalLink, Heart, Pencil, Save, Users } from "lucide-react";
+import { ArrowLeft, BookCheck, BookPlus, Check, Clock3, ExternalLink, Heart, Link2, Pencil, Save, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
@@ -15,6 +15,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { recipeArt, recipeTotalMinutes } from "@/lib/data/recipe-view";
 import { FoodArt } from "./food-art";
+import { ImportIntoRecipeDialog } from "./import-into-recipe-dialog";
 import { RecipeEditor } from "./recipe-editor";
 import { RecipeIngredients } from "./recipe-ingredients";
 import { CurrentRecipeButton } from "./current-recipe-button";
@@ -29,6 +30,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
   const setFavorite = useMutation(api.recipeCards.setFavorite);
   const [servings, setServings] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [returnFocusToEdit, setReturnFocusToEdit] = useState(false);
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState("");
@@ -41,6 +43,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
   const recipeDocId = recipe._id as Id<"recipes">;
   const totalMinutes = recipeTotalMinutes(recipe);
   const tags = recipe.categories.length > 0 ? recipe.categories : recipe.cuisines;
+  const isEmpty = ingredients.length === 0 && recipe.instructions.length === 0;
 
   async function saveNotes() {
     const notes = notesRef.current?.value.trim() ?? "";
@@ -92,6 +95,19 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
       )}
       {(error || message) && <p className={`mb-4 rounded-lg p-3 text-sm font-semibold ${error ? "bg-red-50 text-red-700" : "bg-primary-soft text-primary"}`} role={error ? "alert" : "status"}>{error || message}</p>}
 
+      {canEdit && isEmpty && !editing && (
+        <Card className="mb-6 border-primary bg-primary-soft">
+          <CardContent>
+            <p className="font-extrabold">{recipe.title} has no ingredients or steps yet</p>
+            <p className="mt-1 text-sm">Import it from a web link, or add them yourself.</p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Button onClick={() => setImporting(true)}><Link2 size={17} aria-hidden="true" />Import from link</Button>
+              <Button variant="secondary" onClick={() => { setMessage(""); setEditing(true); }}><Pencil size={17} aria-hidden="true" />Add them myself</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {editing ? (
         <RecipeEditor
           recipe={recipe}
@@ -121,6 +137,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
               <div className="recipe-detail-actions mt-4 flex flex-wrap items-center gap-1 border-t border-border pt-3">
                 {saved !== null && <Button variant="ghost" size="sm" aria-pressed={saved.isFavorite} onClick={() => void toggleFavorite()}><Heart size={16} fill={saved.isFavorite ? "currentColor" : "none"} />{saved.isFavorite ? "Favorited" : "Favorite"}</Button>}
                 {canEdit && <Button variant="ghost" size="sm" autoFocus={returnFocusToEdit} onClick={() => { setMessage(""); setEditing(true); }}><Pencil size={16} />Edit recipe</Button>}
+                {canEdit && !isEmpty && <Button variant="ghost" size="sm" onClick={() => setImporting(true)}><Link2 size={16} />Import from link</Button>}
                 {recipe.sourceUrl && <Button asChild variant="ghost" size="sm"><a href={recipe.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} />View original</a></Button>}
               </div>
               {(canEdit || saved !== null) && (
@@ -136,6 +153,18 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
             <section><h2 className="section-heading">Instructions</h2><p className="section-copy mb-4">A clean, distraction-free cooking view.</p><ol className="stack">{recipe.instructions.map((instruction) => <li className="flex gap-4 rounded-xl border border-border bg-white p-5" key={instruction.position}><span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary text-sm font-extrabold text-white">{instruction.position}</span><p className="pt-1 text-sm leading-6">{instruction.text}</p></li>)}</ol></section>
           </div>
         </>
+      )}
+
+      {canEdit && (
+        <ImportIntoRecipeDialog
+          recipeId={recipeDocId}
+          title={recipe.title}
+          ingredientCount={ingredients.length}
+          instructionCount={recipe.instructions.length}
+          open={importing}
+          onOpenChange={setImporting}
+          onFilled={(text) => { setError(""); setMessage(text); }}
+        />
       )}
 
       {saved !== null
