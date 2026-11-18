@@ -20,6 +20,10 @@ import { DayCard, dayCardId } from "./day-card";
 import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
 import { WeekStrip } from "./week-strip";
 
+/** What typing does, matching the rules exactly (fixes the prototype's bug 2). */
+export const PLANNER_HINT =
+  "Type a meal and press Enter to go to the next one. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Press a selected type again to clear it.";
+
 const PREVIOUS_WEEK_ID = "planner-previous-week";
 
 /** Today's local date, refreshed every minute and when the page comes back into view. */
@@ -69,20 +73,25 @@ export function PlannerWeek() {
   const pendingFocus = useRef<string | null>(null);
   const requestFocus = useCallback((id: string) => {
     const element = document.getElementById(id);
-    if (element) {
-      pendingFocus.current = null;
-      element.focus();
-    } else {
-      pendingFocus.current = id;
-    }
+    element?.focus();
+    // Keep trying on later renders until the control exists and takes focus.
+    pendingFocus.current = element !== null && document.activeElement === element ? null : id;
+  }, []);
+  useEffect(() => {
+    // Once the user moves focus themselves, drop a request still waiting.
+    const forget = (event: FocusEvent) => {
+      if (pendingFocus.current !== null && (event.target as HTMLElement | null)?.id !== pendingFocus.current) {
+        pendingFocus.current = null;
+      }
+    };
+    document.addEventListener("focusin", forget);
+    return () => document.removeEventListener("focusin", forget);
   }, []);
   useEffect(() => {
     if (pendingFocus.current === null) return;
     const element = document.getElementById(pendingFocus.current);
-    if (element) {
-      pendingFocus.current = null;
-      element.focus();
-    }
+    element?.focus();
+    if (element !== null && document.activeElement === element) pendingFocus.current = null;
   });
 
   // On a phone, open the current week at today's card, once.
@@ -162,6 +171,7 @@ export function PlannerWeek() {
               />
             ))}
           </ul>
+          <p className="planner-hint">{PLANNER_HINT}</p>
           <datalist id="planner-suggestions">
             {(suggestions ?? []).map((name) => <option key={name} value={name} />)}
           </datalist>

@@ -151,4 +151,13 @@ describe("PlannerWeek", () => {
     const options = [...container.querySelectorAll("datalist#planner-suggestions option")].map((option) => option.getAttribute("value"));
     expect(options).toEqual(["Chili", "Thai"]);
   });
+
+  it("explains exactly what typing does", () => {
+    render(<PlannerWeek />);
+    expect(
+      screen.getByText(
+        "Type a meal and press Enter to go to the next one. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Press a selected type again to clear it.",
+      ),
+    ).toBeInTheDocument();
+  });
 });
