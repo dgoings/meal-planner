@@ -1,0 +1,133 @@
+"use client";
+
+import { useMutation, useQuery } from "convex/react";
+import { ChevronLeft, ChevronRight, Settings2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { api } from "@/convex/_generated/api";
+import {
+  addDays,
+  formatWeekRange,
+  isDateKey,
+  localDateKey,
+  weekStartOf,
+  type WeekStart,
+} from "@/convex/lib/plannerSlots";
+import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
+import { WeekStrip } from "./week-strip";
+
+const PREVIOUS_WEEK_ID = "planner-previous-week";
+
+/** Today's local date, refreshed every minute and when the page comes back into view. */
+function useToday() {
+  const [today, setToday] = useState(() => localDateKey(new Date()));
+  useEffect(() => {
+    const refresh = () => setToday(localDateKey(new Date()));
+    const timer = window.setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+  return today;
+}
+
+export function PlannerWeek() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const today = useToday();
+  const planner = useQuery(api.planner.mine, {});
+  const ensure = useMutation(api.planner.ensure);
+  const ensureStarted = useRef(false);
+  const [ensureFailed, setEnsureFailed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // "This week" disappears once used, so focus moves to "Previous week" (§2.2).
+  const focusPrevious = useRef(false);
+
+  useEffect(() => {
+    if (planner !== null || ensureStarted.current) return;
+    ensureStarted.current = true;
+    ensure({}).catch(() => setEnsureFailed(true));
+  }, [planner, ensure]);
+
+  const weekStartPreference: WeekStart = planner?.weekStart ?? 1;
+  const requested = searchParams.get("week");
+  const start = weekStartOf(requested !== null && isDateKey(requested) ? requested : today, weekStartPreference);
+  const currentStart = weekStartOf(today, weekStartPreference);
+  const week = useQuery(api.planner.week, planner ? { plannerId: planner.plannerId, start } : "skip");
+
+  useEffect(() => {
+    if (focusPrevious.current && start === currentStart) {
+      focusPrevious.current = false;
+      document.getElementById(PREVIOUS_WEEK_ID)?.focus();
+    }
+  }, [start, currentStart]);
+
+  function showWeek(next: string) {
+    router.replace(`?week=${next}`, { scroll: false });
+  }
+
+  if (ensureFailed) {
+    return <p className="rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-700" role="alert">Your planner could not be set up. Reload the page to try again.</p>;
+  }
+
+  return (
+    <div className="planner">
+      <div className="planner-toolbar">
+        <div className="planner-week-nav">
+          <Button id={PREVIOUS_WEEK_ID} variant="secondary" size="icon" aria-label="Previous week" onClick={() => showWeek(addDays(start, -7))}>
+            <ChevronLeft size={20} aria-hidden="true" />
+          </Button>
+          <h2 className="planner-range" aria-live="polite">{formatWeekRange(start)}</h2>
+          <Button variant="secondary" size="icon" aria-label="Next week" onClick={() => showWeek(addDays(start, 7))}>
+            <ChevronRight size={20} aria-hidden="true" />
+          </Button>
+          {start !== currentStart && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                focusPrevious.current = true;
+                showWeek(currentStart);
+              }}
+            >
+              This week
+            </Button>
+          )}
+        </div>
+        <Button variant="ghost" size="sm" disabled={!planner} onClick={() => setSettingsOpen(true)}>
+          <Settings2 size={17} aria-hidden="true" />
+          Planner settings
+        </Button>
+      </div>
+
+      {planner === undefined || planner === null || week === undefined ? (
+        <div className="planner-loading">
+          <p className="sr-only" role="status">Loading your plan…</p>
+          <Skeleton className="h-8 w-full max-w-md" />
+          {[0, 1, 2].map((item) => <Skeleton className="h-40" key={item} />)}
+        </div>
+      ) : (
+        <>
+          <WeekStrip slots={week.slots} start={start} />
+        </>
+      )}
+
+      {planner && (
+        <PlannerPreferencesDialog
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          plannerId={planner.plannerId}
+          weekStart={planner.weekStart}
+          people={planner.people}
+          onWeekStartChange={(next) => showWeek(weekStartOf(start, next))}
+        />
+      )}
+    </div>
+  );
+}
