@@ -13,6 +13,18 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { groceryCategoryOrder } from "@/convex/lib/groceryCategory";
 import type { GroceryItem } from "@/lib/data/types";
 
+function sameItem(first: GroceryItem, second: GroceryItem) {
+  return (
+    first.name === second.name &&
+    first.quantity === second.quantity &&
+    first.unit === second.unit &&
+    first.category === second.category &&
+    first.checked === second.checked &&
+    first.source === second.source &&
+    first.planAmount === second.planAmount
+  );
+}
+
 export function GroceryListEditor({
   initialItems,
   initialName = "Untitled grocery list",
@@ -21,6 +33,7 @@ export function GroceryListEditor({
   canSave = true,
   initialSaveState = "idle",
   onSaved,
+  sourceLabel = "From",
 }: {
   initialItems: GroceryItem[];
   initialName?: string;
@@ -29,6 +42,8 @@ export function GroceryListEditor({
   canSave?: boolean;
   initialSaveState?: "idle" | "saved";
   onSaved?: () => void;
+  /** How an item's recipes are introduced: "From Chili", or "For Chili" on a planner week's list. */
+  sourceLabel?: "From" | "For";
 }) {
   const saveList = useMutation(api.groceryLists.save);
   const updateSavedItem = useMutation(api.groceryLists.updateItem);
@@ -62,7 +77,12 @@ export function GroceryListEditor({
         .map((item) => {
           const previous = previousById.get(item.id);
           const next = nextById.get(item.id);
-          return previous && next && previous.checked !== next.checked
+          if (!previous || !next) return item;
+          // A row not edited here takes the server's version whole (for
+          // example new amounts from "Update from plan"); an edited row keeps
+          // its local edits and takes only the check mark.
+          if (sameItem(item, previous)) return next;
+          return previous.checked !== next.checked
             ? { ...item, checked: next.checked }
             : item;
         }),
@@ -277,8 +297,12 @@ export function GroceryListEditor({
                     >
                       <Trash2 size={17} />
                     </Button>
-                    {item.source && (
-                      <p className="item-source">From {item.source}</p>
+                    {(item.source || item.planAmount) && (
+                      <p className="item-source">
+                        {item.source && `${sourceLabel} ${item.source}`}
+                        {item.source && item.planAmount && " · "}
+                        {item.planAmount && `Plan now needs ${item.planAmount}`}
+                      </p>
                     )}
                   </div>
                 ))}

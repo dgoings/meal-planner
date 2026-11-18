@@ -19,6 +19,7 @@ import {
 import { DayCard, dayCardId } from "./day-card";
 import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
 import { PlannerPickerProvider } from "./slot-combobox";
+import { WeekGroceryList } from "./week-grocery-list";
 import { WeekStrip } from "./week-strip";
 
 /** What typing does, matching the rules exactly (fixes the prototype's bug 2). */
@@ -177,6 +178,7 @@ export function PlannerWeek() {
       ) : (
         <PlannerPickerProvider value={picker ?? NO_CHOICES}>
           <WeekStrip slots={week.slots} start={start} />
+          <WeekGroceryList plannerId={planner.plannerId} start={start} />
           <ul className="planner-days" aria-label={`Meals for ${formatWeekRange(start)}`}>
             {weekDates(start).map((date) => (
               <DayCard

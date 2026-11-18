@@ -21,6 +21,18 @@ export const importStatusValidator = v.union(
   v.literal("failed"),
 );
 export const leftoverFromValidator = v.union(slotRefValidator, v.literal("other"));
+/** A Cook slot a week's grocery list leaves out, and why (`convex/lib/planGrocery.ts`). */
+export const notIncludedValidator = v.object({
+  date: v.string(),
+  meal: mealValidator,
+  name: v.string(),
+  reason: v.union(
+    v.literal("no-recipe"),
+    v.literal("recipe-unavailable"),
+    v.literal("import-pending"),
+    v.literal("no-ingredients"),
+  ),
+});
 
 const slotBase = {
   plannerId: v.id("planners"),
