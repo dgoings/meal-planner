@@ -1,7 +1,7 @@
 // Validators shared by the planner schema and functions.
 import { v } from "convex/values";
 
-export const mealValidator = v.union(v.literal("lunch"), v.literal("dinner"));
+export const mealValidator = v.union(v.literal("breakfast"), v.literal("lunch"), v.literal("dinner"));
 export const slotTypeValidator = v.union(
   v.literal("cook"),
   v.literal("left"),

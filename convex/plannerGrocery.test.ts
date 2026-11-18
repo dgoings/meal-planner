@@ -21,7 +21,7 @@ async function recipe(t: AuthTest, userId: Id<"users">, fields: Omit<UserRecipeF
   return await t.run((ctx) => insertUserRecipe(ctx, userId, { instructions: [], ...fields }));
 }
 
-type Meal = "lunch" | "dinner";
+type Meal = "breakfast" | "lunch" | "dinner";
 
 async function putSlot(
   t: AuthTest,
@@ -147,6 +147,23 @@ describe("plannerGrocery.syncWeek", () => {
     ]);
     expect(await listItems(as, result.listId)).toEqual([]);
     expect((await as.query(api.plannerGrocery.forWeek, { plannerId, start })).list?.notIncluded).toEqual(result.notIncluded);
+  });
+
+  it("counts breakfast Cook slots, and leaves out meals that are not planned", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com", 2);
+    const oats = await recipe(t, userId, { title: "Oats", servings: 2, ingredients: ["1 cup oats"] });
+    const eggs = await recipe(t, userId, { title: "Eggs", servings: 2, ingredients: ["2 eggs"] });
+    await putSlot(t, plannerId, userId, "2026-11-16", "breakfast", { type: "cook", recipeId: oats });
+    await putSlot(t, plannerId, userId, "2026-11-17", "dinner", { type: "cook", recipeId: eggs });
+
+    const first = await as.mutation(api.plannerGrocery.syncWeek, { plannerId, start });
+    expect((await listItems(as, first.listId)).map((item) => item.name).sort()).toEqual(["eggs", "oats"]);
+
+    await as.mutation(api.planner.updatePreferences, { plannerId, meals: ["lunch", "dinner"] });
+    expect((await as.query(api.plannerGrocery.forWeek, { plannerId, start })).list?.changed).toBe(true);
+    await as.mutation(api.plannerGrocery.syncWeek, { plannerId, start });
+    expect((await listItems(as, first.listId)).map((item) => item.name)).toEqual(["eggs"]);
   });
 
   it("keeps hand-added items, ticks and hand-edited quantities, and re-derives the rest", async () => {

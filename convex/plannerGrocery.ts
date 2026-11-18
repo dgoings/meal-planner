@@ -30,7 +30,7 @@ import {
   type PlanItemSource,
   type PlanSlot,
 } from "./lib/planGrocery";
-import { cleanName } from "./lib/plannerRules";
+import { cleanName, plannedMeals } from "./lib/plannerRules";
 import { addDays, isDateKey, slotOrder } from "./lib/plannerSlots";
 import { notIncludedValidator } from "./lib/plannerValidators";
 import { loadSlots, normalizePeople, requirePlanner } from "./planner";
@@ -45,7 +45,8 @@ function assertDate(date: string) {
 
 /** The week's Cook slots, resolved to recipes, and the plan's fingerprint. */
 async function loadPlan(ctx: QueryCtx | MutationCtx, planner: Doc<"planners">, start: string) {
-  const loaded = await loadSlots(ctx, planner._id, start, addDays(start, PLAN_RANGE_DAYS - 1));
+  const meals = plannedMeals(planner.meals);
+  const loaded = await loadSlots(ctx, planner._id, start, addDays(start, PLAN_RANGE_DAYS - 1), meals);
   const recipeUpdatedAt: Record<string, number> = {};
   const slots: PlanSlot<Id<"recipes">>[] = loaded.map(({ cook, slot }) => {
     if (cook === null) return slot;

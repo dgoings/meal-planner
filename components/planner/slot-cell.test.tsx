@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
+import type { Meal } from "@/convex/lib/plannerRules";
 import { DayCard } from "./day-card";
 import type { PickerData } from "./picker-options";
 import { PlannerPickerProvider } from "./slot-combobox";
@@ -31,13 +32,13 @@ const mutation = (name: string) => {
 
 const NO_CHOICES: PickerData = { recipes: [], meals: [] };
 
-function renderDays(dates: string[], slots: SlotView[] = [], picker: PickerData = NO_CHOICES) {
+function renderDays(dates: string[], slots: SlotView[] = [], picker: PickerData = NO_CHOICES, meals?: Meal[]) {
   const requestFocus = (id: string) => document.getElementById(id)?.focus();
   return render(
     <PlannerPickerProvider value={picker}>
       <ul>
         {dates.map((date) => (
-          <DayCard key={date} plannerId={plannerId} date={date} today={false} weekStart="2026-11-16" slots={slots} requestFocus={requestFocus} />
+          <DayCard key={date} plannerId={plannerId} date={date} today={false} weekStart="2026-11-16" slots={slots} requestFocus={requestFocus} meals={meals} />
         ))}
       </ul>
     </PlannerPickerProvider>,
@@ -51,9 +52,23 @@ describe("SlotCell editing", () => {
     mocks.mutations = {};
   });
 
-  it("commits on Enter and moves lunch to dinner to the next day's lunch", async () => {
+  it("commits on Enter and moves breakfast to lunch to dinner to the next day's breakfast", async () => {
     const user = userEvent.setup();
     renderDays(["2026-11-16", "2026-11-17"]);
+
+    await user.type(input("Monday breakfast"), "Oats{Enter}");
+    expect(mutation("commitText")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "breakfast", text: "Oats" });
+    expect(input("Monday lunch")).toHaveFocus();
+    await user.type(input("Monday lunch"), "Chili{Enter}");
+    expect(input("Monday dinner")).toHaveFocus();
+    await user.type(input("Monday dinner"), "Stew{Enter}");
+    expect(input("Tuesday breakfast")).toHaveFocus();
+  });
+
+  it("commits on Enter and moves lunch to dinner to the next day's lunch when breakfast is off", async () => {
+    const user = userEvent.setup();
+    renderDays(["2026-11-16", "2026-11-17"], [], NO_CHOICES, ["lunch", "dinner"]);
+    expect(screen.queryByRole("combobox", { name: "Monday breakfast" })).toBeNull();
 
     await user.type(input("Monday lunch"), "Chili{Enter}");
     expect(mutation("commitText")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", text: "Chili" });

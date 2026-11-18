@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type FocusEvent } from "react";
 import { ImportResultDialog } from "@/components/discovery/import-result-dialog";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { isRecipeLink, type Meal, type SlotType } from "@/convex/lib/plannerRules";
+import { isRecipeLink, MEAL_LABELS, MEALS, type Meal, type SlotType } from "@/convex/lib/plannerRules";
 import {
   formatDay,
   leftoverChoices,
@@ -41,9 +41,11 @@ export type SlotCellProps = {
   /** Every slot the week query returned, which leftover choices need. */
   slots: SlotView[];
   requestFocus: (id: string) => void;
+  /** The meals the planner shows, which Enter moves through. */
+  meals?: readonly Meal[];
 };
 
-export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus }: SlotCellProps) {
+export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus, meals = MEALS }: SlotCellProps) {
   const setType = useMutation(api.planner.setType);
   const commitText = useMutation(api.planner.commitText);
   const commitOther = useMutation(api.planner.commitOther);
@@ -91,9 +93,9 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
     return attempt;
   }
 
-  /** Enter: lunch, same day's dinner, next day's lunch; stays put on the last dinner (§2.3). */
+  /** Enter: the day's next shown meal, then the next day's first; stays put on the week's last (§2.3). */
   function focusNext() {
-    const next = nextSlot(ref, weekStart);
+    const next = nextSlot(ref, weekStart, meals);
     if (next) requestFocus(slotControlId(next.date, next.meal));
   }
 
@@ -200,7 +202,7 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
 
   return (
     <section ref={section} className={cn("planner-slot", type && `planner-slot-${type}`)} aria-label={label} aria-busy={pending > 0}>
-      <p className="planner-slot-label" aria-hidden="true">{meal === "lunch" ? "Lunch" : "Dinner"}</p>
+      <p className="planner-slot-label" aria-hidden="true">{MEAL_LABELS[meal]}</p>
       <div
         ref={typeGroup}
         className="planner-types"

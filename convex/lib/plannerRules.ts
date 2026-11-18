@@ -2,7 +2,27 @@
 // Meal Planner prototype (as-built spec §2.3 and §3.3–3.4). This module
 // imports nothing from Convex so the app's components can use it too.
 
-export type Meal = "lunch" | "dinner";
+/**
+ * The meals of a day, in the order they are eaten. Everything that orders or
+ * lists meals (the day card, Enter, leftovers, Home) reads this list.
+ */
+export const MEALS = ["breakfast", "lunch", "dinner"] as const;
+export type Meal = (typeof MEALS)[number];
+export const MEAL_LABELS: Record<Meal, string> = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner" };
+
+/** Chosen meals in day order without repeats; a planner must plan at least one meal. */
+export function normalizeMeals(meals: readonly Meal[]): Meal[] {
+  const ordered = MEALS.filter((meal) => meals.includes(meal));
+  if (ordered.length === 0) throw new Error("Plan at least one meal");
+  return ordered;
+}
+
+/** The meals a planner shows: its "Meals to plan" setting, or every meal before one was chosen. */
+export function plannedMeals(meals: readonly Meal[] | undefined): Meal[] {
+  const ordered = MEALS.filter((meal) => meals?.includes(meal));
+  return ordered.length === 0 ? [...MEALS] : ordered;
+}
+
 export type SlotType = "cook" | "left" | "out" | "skip";
 
 export const NAME_MAX = 80;
