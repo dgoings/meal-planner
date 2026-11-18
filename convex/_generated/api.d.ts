@@ -18,6 +18,7 @@ import type * as lib_boundedFetch from "../lib/boundedFetch.js";
 import type * as lib_groceryCategory from "../lib/groceryCategory.js";
 import type * as lib_manualIngredient from "../lib/manualIngredient.js";
 import type * as lib_plannerRules from "../lib/plannerRules.js";
+import type * as lib_plannerSlots from "../lib/plannerSlots.js";
 import type * as lib_publicDns from "../lib/publicDns.js";
 import type * as lib_recipeAgentTypes from "../lib/recipeAgentTypes.js";
 import type * as lib_recipeModel from "../lib/recipeModel.js";
@@ -53,6 +54,7 @@ declare const fullApi: ApiFromModules<{
   "lib/groceryCategory": typeof lib_groceryCategory;
   "lib/manualIngredient": typeof lib_manualIngredient;
   "lib/plannerRules": typeof lib_plannerRules;
+  "lib/plannerSlots": typeof lib_plannerSlots;
   "lib/publicDns": typeof lib_publicDns;
   "lib/recipeAgentTypes": typeof lib_recipeAgentTypes;
   "lib/recipeModel": typeof lib_recipeModel;
