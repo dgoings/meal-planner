@@ -88,11 +88,29 @@ describe("PlannerWeek", () => {
   it("changes the week start and moves the shown week back to match", async () => {
     const user = userEvent.setup();
     mocks.search = "week=2026-11-16";
+    let resolve: (value: null) => void = () => undefined;
+    mocks.mutations["planner:updatePreferences"] = vi.fn(() => new Promise<null>((done) => { resolve = done; }));
     render(<PlannerWeek />);
     await user.click(screen.getByRole("button", { name: "Planner settings" }));
     await user.selectOptions(screen.getByLabelText("Week starts on"), "0");
     expect(mocks.mutations["planner:updatePreferences"]).toHaveBeenCalledWith({ plannerId: "planner-1", weekStart: 0 });
-    await waitFor(() => expect(mocks.replace).toHaveBeenCalledWith("?week=2026-11-15", { scroll: false }));
+    expect(screen.getByLabelText("Week starts on")).toHaveValue("0");
+    expect(mocks.replace).not.toHaveBeenCalled();
+
+    await act(async () => resolve(null));
+    expect(mocks.replace).toHaveBeenCalledWith("?week=2026-11-15", { scroll: false });
+  });
+
+  it("leaves the week alone when the week start fails to save", async () => {
+    const user = userEvent.setup();
+    mocks.search = "week=2026-11-16";
+    mocks.mutations["planner:updatePreferences"] = vi.fn().mockRejectedValue(new Error("offline"));
+    render(<PlannerWeek />);
+    await user.click(screen.getByRole("button", { name: "Planner settings" }));
+    await user.selectOptions(screen.getByLabelText("Week starts on"), "0");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t save that setting. Try again.");
+    expect(screen.getByLabelText("Week starts on")).toHaveValue("1");
+    expect(mocks.replace).not.toHaveBeenCalled();
   });
 
   it("saves people cooked for, rounded and clamped", async () => {

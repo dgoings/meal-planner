@@ -48,15 +48,26 @@ export function PlannerPreferencesDialog({
 function PreferencesFields({ plannerId, weekStart, people, onWeekStartChange }: PreferencesProps) {
   const updatePreferences = useMutation(api.planner.updatePreferences);
   const [peopleDraft, setPeopleDraft] = useState(String(people));
+  // Shows the choice while it saves; the week moves only once it has saved.
+  const [weekStartDraft, setWeekStartDraft] = useState(weekStart);
   const [error, setError] = useState(false);
 
+  /** Saves one setting; resolves to whether it saved. */
   async function save(patch: { weekStart?: WeekStart; people?: number }) {
     setError(false);
     try {
       await updatePreferences({ plannerId, ...patch });
+      return true;
     } catch {
       setError(true);
+      return false;
     }
+  }
+
+  async function changeWeekStart(next: WeekStart) {
+    setWeekStartDraft(next);
+    if (await save({ weekStart: next })) onWeekStartChange(next);
+    else setWeekStartDraft(weekStart);
   }
 
   function commitPeople() {
@@ -71,12 +82,8 @@ function PreferencesFields({ plannerId, weekStart, people, onWeekStartChange }: 
         Week starts on
         <select
           className="input"
-          value={weekStart}
-          onChange={(event) => {
-            const next = Number(event.target.value) as WeekStart;
-            void save({ weekStart: next });
-            onWeekStartChange(next);
-          }}
+          value={weekStartDraft}
+          onChange={(event) => void changeWeekStart(Number(event.target.value) as WeekStart)}
         >
           {WEEK_STARTS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
