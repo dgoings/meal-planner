@@ -141,3 +141,103 @@ describe("aiReadiness", () => {
     expect(await readiness()).toBe("ai_not_configured");
   });
 });
+
+describe("aiSettings.save", () => {
+  function stubFetch(status = 200, body: unknown = { data: [] }) {
+    const fetchMock = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify(body), { status }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("validates, encrypts and stores a new key", async () => {
+    const t = initAuthTest();
+    const { userId, as } = await signedInUser(t, "ada@example.com");
+    const fetchMock = stubFetch();
+
+    expect(
+      await as.action(api.aiSettings.save, { provider: "anthropic", model: " ", apiKey: ` ${KEY} ` }),
+    ).toEqual({ provider: "anthropic", model: null, keyHint: "1a2b" });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [stored] = await rows(t);
+    expect(stored).toMatchObject({ userId, provider: "anthropic", keyHint: "1a2b", keyScheme: 1 });
+    expect(stored.model).toBeUndefined();
+    expect(stored.keyCiphertext).not.toContain(KEY);
+    const { decryptApiKey } = await import("./lib/aiKeyCrypto");
+    expect(
+      await decryptApiKey(TEST_AI_KEY_SECRET, stored, { userId, provider: "anthropic" }),
+    ).toBe(KEY);
+    expect((await as.query(api.aiSettings.get, {}))?.settings?.keyHint).toBe("1a2b");
+  });
+
+  it("stores nothing when the provider rejects the key", async () => {
+    const t = initAuthTest();
+    const { as } = await signedInUser(t, "ada@example.com");
+    stubFetch(401, { error: { message: "invalid x-api-key" } });
+    await expect(
+      as.action(api.aiSettings.save, { provider: "anthropic", apiKey: KEY }),
+    ).rejects.toThrow("ai_key_invalid");
+    expect(await rows(t)).toHaveLength(0);
+  });
+
+  it("checks the model and key shape before calling the provider", async () => {
+    const t = initAuthTest();
+    const { as } = await signedInUser(t, "ada@example.com");
+    const fetchMock = stubFetch();
+    await expect(
+      as.action(api.aiSettings.save, { provider: "openai", model: "", apiKey: KEY }),
+    ).rejects.toThrow("ai_model_required");
+    await expect(
+      as.action(api.aiSettings.save, { provider: "anthropic", apiKey: "sk test" }),
+    ).rejects.toThrow("ai_key_malformed");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the saved key when the key is left blank for the same provider", async () => {
+    const t = initAuthTest();
+    const { userId, as } = await signedInUser(t, "ada@example.com");
+    await storeKey(t, userId, "openai", "gpt-x");
+    const fetchMock = stubFetch(200, { id: "gpt-y" });
+
+    expect(
+      await as.action(api.aiSettings.save, { provider: "openai", model: "gpt-y" }),
+    ).toEqual({ provider: "openai", model: "gpt-y", keyHint: "1a2b" });
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBe(
+      `Bearer ${KEY}`,
+    );
+    expect((await rows(t))[0].model).toBe("gpt-y");
+
+    await expect(
+      as.action(api.aiSettings.save, { provider: "anthropic" }),
+    ).rejects.toThrow("ai_key_missing");
+  });
+
+  it("asks for a key when none is saved", async () => {
+    const t = initAuthTest();
+    const { as } = await signedInUser(t, "ada@example.com");
+    stubFetch();
+    await expect(as.action(api.aiSettings.save, { provider: "anthropic" })).rejects.toThrow(
+      "ai_key_missing",
+    );
+  });
+
+  it("fails closed without the encryption secret", async () => {
+    const t = initAuthTest();
+    const { as } = await signedInUser(t, "ada@example.com");
+    const fetchMock = stubFetch();
+    vi.stubEnv("AI_KEY_ENCRYPTION_SECRET", "");
+    await expect(
+      as.action(api.aiSettings.save, { provider: "anthropic", apiKey: KEY }),
+    ).rejects.toThrow("ai_not_configured");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a signed-in user", async () => {
+    const t = initAuthTest();
+    await expect(
+      t.action(api.aiSettings.save, { provider: "anthropic", apiKey: KEY }),
+    ).rejects.toThrow("Unauthenticated");
+  });
+});

@@ -19,6 +19,7 @@ import type * as lib_aiErrorCodes from "../lib/aiErrorCodes.js";
 import type * as lib_aiErrors from "../lib/aiErrors.js";
 import type * as lib_aiKeyCrypto from "../lib/aiKeyCrypto.js";
 import type * as lib_aiModel from "../lib/aiModel.js";
+import type * as lib_aiProviderCheck from "../lib/aiProviderCheck.js";
 import type * as lib_aiValidators from "../lib/aiValidators.js";
 import type * as lib_boundedFetch from "../lib/boundedFetch.js";
 import type * as lib_groceryCategory from "../lib/groceryCategory.js";
@@ -59,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   "lib/aiErrors": typeof lib_aiErrors;
   "lib/aiKeyCrypto": typeof lib_aiKeyCrypto;
   "lib/aiModel": typeof lib_aiModel;
+  "lib/aiProviderCheck": typeof lib_aiProviderCheck;
   "lib/aiValidators": typeof lib_aiValidators;
   "lib/boundedFetch": typeof lib_boundedFetch;
   "lib/groceryCategory": typeof lib_groceryCategory;
