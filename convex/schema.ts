@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { planSlotValidator, weekStartValidator } from "./lib/plannerValidators";
 
 const importStatus = v.union(
   v.literal("queued"),
@@ -309,6 +310,36 @@ export default defineSchema({
     .index("by_grocery_list_item", ["groceryListItemId"])
     .index("by_recipe", ["recipeId"])
     .index("by_recipe_ingredient", ["recipeIngredientId"]),
+
+  // A weekly meal planner. Owned by one user today; slots and planner meals
+  // reference the planner rather than the user so a household can own one
+  // later. Access always goes through `canAccessPlanner`.
+  planners: defineTable({
+    ownerId: v.id("users"),
+    weekStart: weekStartValidator,
+    people: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_owner", ["ownerId"]),
+
+  // Eat-out and other-leftovers meals. Cook slots point at recipes instead.
+  // `key` is `mealKey(name)` and is unique per planner.
+  plannerMeals: defineTable({
+    plannerId: v.id("planners"),
+    name: v.string(),
+    key: v.string(),
+    description: v.optional(v.string()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_planner_and_key", ["plannerId", "key"]),
+
+  // At most one row per planner, date and meal; an unplanned slot has none.
+  planSlots: defineTable(planSlotValidator).index("by_planner_and_date", [
+    "plannerId",
+    "date",
+    "meal",
+  ]),
 
   recipeSearchCache: defineTable({
     normalizedQuery: v.string(),
