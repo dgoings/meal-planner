@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { insertUserRecipe } from "./lib/userRecipes";
 import { initAuthTest, signedInUser, type AuthTest } from "./testing.helpers";
 
@@ -73,5 +74,164 @@ describe("planner access and preferences", () => {
     await expect(
       grace.as.mutation(api.planner.updatePreferences, { plannerId, people: 2 }),
     ).rejects.toThrow(/Planner was not found/);
+  });
+});
+
+async function slotOf(t: AuthTest, plannerId: Id<"planners">, date: string, meal: "lunch" | "dinner") {
+  return await t.run((ctx) =>
+    ctx.db
+      .query("planSlots")
+      .withIndex("by_planner_and_date", (q) => q.eq("plannerId", plannerId).eq("date", date).eq("meal", meal))
+      .unique(),
+  );
+}
+
+async function recipesOf(t: AuthTest, userId: Id<"users">) {
+  return await t.run(async (ctx) => {
+    const saved = await ctx.db.query("savedRecipes").withIndex("by_user", (q) => q.eq("userId", userId)).collect();
+    return await Promise.all(saved.map(async (item) => (await ctx.db.get(item.recipeId))!));
+  });
+}
+
+describe("commitText", () => {
+  const lunch = { date: "2026-11-18", meal: "lunch" } as const;
+
+  it("links a saved recipe by its normalised name instead of creating one", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    const chili = await t.run((ctx) => insertUserRecipe(ctx, userId, { title: "Chili", ingredients: [], instructions: [] }));
+
+    expect(await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "  CHILI!! " })).toEqual({ type: "cook", name: "Chili" });
+    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toMatchObject({ type: "cook", recipeId: chili });
+    expect(await recipesOf(t, userId)).toHaveLength(1);
+  });
+
+  it("creates one bare recipe for a new name and reuses it", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "Lentil soup" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-19", meal: "dinner", text: "lentil SOUP" });
+    const recipes = await recipesOf(t, userId);
+    expect(recipes.map((recipe) => recipe.title)).toEqual(["Lentil soup"]);
+    expect(await slotOf(t, plannerId, "2026-11-19", "dinner")).toMatchObject({ recipeId: recipes[0]._id });
+  });
+
+  it("does not match another user's recipe or a deleted one", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    const grace = await signedInUser(t, "grace@example.com");
+    await t.run((ctx) => insertUserRecipe(ctx, grace.userId, { title: "Chili", ingredients: [], instructions: [] }));
+    const deleted = await t.run((ctx) => insertUserRecipe(ctx, userId, { title: "Stew", ingredients: [], instructions: [] }));
+    await t.run((ctx) => ctx.db.patch(deleted, { deletedAt: Date.now() }));
+
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "Chili" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-18", meal: "dinner", text: "Stew" });
+    const titles = (await recipesOf(t, userId)).filter((recipe) => recipe.deletedAt === undefined).map((recipe) => recipe.title);
+    expect(titles.sort()).toEqual(["Chili", "Stew"]);
+    expect((await slotOf(t, plannerId, "2026-11-18", "dinner"))).not.toMatchObject({ recipeId: deleted });
+  });
+
+  it("sets the type from typed text in an unplanned slot", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+
+    expect(await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "out at Chipotle" })).toEqual({ type: "out", name: "Chipotle" });
+    expect(await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-19", meal: "lunch", text: "out chipotle" })).toEqual({ type: "out", name: "Chipotle" });
+    const first = await slotOf(t, plannerId, lunch.date, lunch.meal);
+    const second = await slotOf(t, plannerId, "2026-11-19", "lunch");
+    expect(first?.type === "out" && second?.type === "out" && first.mealId === second.mealId && first.mealId !== undefined).toBe(true);
+
+    expect(await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-18", meal: "dinner", text: "skip" })).toEqual({ type: "skip", name: "" });
+    expect(await slotOf(t, plannerId, "2026-11-18", "dinner")).toMatchObject({ type: "skip" });
+  });
+
+  it("points typed leftovers at the newest earlier meal, or other leftovers", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-17", meal: "dinner", text: "Curry" });
+
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "leftovers" });
+    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toMatchObject({ type: "left", from: { date: "2026-11-17", meal: "dinner" } });
+
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-10", meal: "lunch", text: "Left over" });
+    expect(await slotOf(t, plannerId, "2026-11-10", "lunch")).toMatchObject({ type: "left", from: "other" });
+  });
+
+  it("keeps the type of a planned slot, and empty text unlinks the recipe", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "Chili" });
+    expect(await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "skip" })).toEqual({ type: "cook", name: "skip" });
+
+    expect(await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "" })).toEqual({ type: "cook", name: "" });
+    const slot = await slotOf(t, plannerId, lunch.date, lunch.meal);
+    expect(slot).toMatchObject({ type: "cook" });
+    expect(slot?.type === "cook" && slot.recipeId).toBeFalsy();
+    expect((await recipesOf(t, userId)).map((recipe) => recipe.title).sort()).toEqual(["Chili", "skip"]);
+  });
+
+  it("does nothing when the text equals the current name", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "Chili" });
+    const before = await slotOf(t, plannerId, lunch.date, lunch.meal);
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: " Chili " });
+    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toEqual(before);
+  });
+
+  it("rejects links, slots without text, bad dates and other users", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    await expect(as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "https://example.com/chili" })).rejects.toThrow(/importLink/);
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "skip" });
+    await expect(as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "Chili" })).rejects.toThrow(/no text/);
+    await expect(as.mutation(api.planner.commitText, { plannerId, date: "2026-02-30", meal: "lunch", text: "Chili" })).rejects.toThrow(/Invalid date/);
+    const grace = await signedInUser(t, "grace@example.com");
+    await expect(grace.as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "Chili" })).rejects.toThrow(/Planner was not found/);
+  });
+});
+
+describe("setType", () => {
+  const lunch = { date: "2026-11-18", meal: "lunch" } as const;
+
+  it("clears the slot when the selected type is pressed again", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.setType, { plannerId, ...lunch, type: "cook" });
+    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toMatchObject({ type: "cook" });
+    await as.mutation(api.planner.setType, { plannerId, ...lunch, type: "cook" });
+    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toBeNull();
+  });
+
+  it("carries the name between Cook and Eat out", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "Chili" });
+    await as.mutation(api.planner.setType, { plannerId, ...lunch, type: "out" });
+    const out = await slotOf(t, plannerId, lunch.date, lunch.meal);
+    expect(out?.type).toBe("out");
+    const meal = await t.run(async (ctx) => (out?.type === "out" && out.mealId ? ctx.db.get(out.mealId) : null));
+    expect(meal?.name).toBe("Chili");
+
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-19", meal: "lunch", text: "out Tacos" });
+    await as.mutation(api.planner.setType, { plannerId, date: "2026-11-19", meal: "lunch", type: "cook" });
+    const titles = (await recipesOf(t, userId)).map((recipe) => recipe.title).sort();
+    expect(titles).toEqual(["Chili", "Tacos"]);
+  });
+
+  it("drops the name for Skip and picks the newest source for Leftovers across weeks", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-15", meal: "dinner", text: "Roast" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "lunch", text: "Chili" });
+
+    await as.mutation(api.planner.setType, { plannerId, date: "2026-11-16", meal: "lunch", type: "skip" });
+    expect(await slotOf(t, plannerId, "2026-11-16", "lunch")).toMatchObject({ type: "skip" });
+
+    await as.mutation(api.planner.setType, { plannerId, date: "2026-11-16", meal: "lunch", type: "left" });
+    expect(await slotOf(t, plannerId, "2026-11-16", "lunch")).toMatchObject({
+      type: "left",
+      from: { date: "2026-11-15", meal: "dinner" },
+    });
   });
 });

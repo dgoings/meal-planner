@@ -2,7 +2,16 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { weekStartValidator } from "./lib/plannerValidators";
+import { cleanName, isRecipeLink, mealKey, parseSlotText, type Meal, type SlotType } from "./lib/plannerRules";
+import {
+  addDays,
+  isDateKey,
+  leftoverChoices,
+  type SlotLike,
+  type SlotRef,
+} from "./lib/plannerSlots";
+import { mealValidator, slotTypeValidator, weekStartValidator } from "./lib/plannerValidators";
+import { insertUserRecipe } from "./lib/userRecipes";
 
 const MAX_PEOPLE = 12;
 
@@ -84,5 +93,215 @@ export const updatePreferences = mutation({
     if (people !== undefined) patch.people = normalizePeople(people);
     await ctx.db.patch(plannerId, patch);
     return null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Slots
+
+const RECIPE_SCAN_LIMIT = 500;
+
+type SlotValue =
+  | { type: "cook"; recipeId?: Id<"recipes"> }
+  | { type: "out"; mealId?: Id<"plannerMeals"> }
+  | { type: "left"; from: SlotRef | "other"; mealId?: Id<"plannerMeals"> }
+  | { type: "skip" };
+
+function assertDate(date: string) {
+  if (!isDateKey(date)) throw new Error("Invalid date");
+}
+
+async function slotRow(ctx: QueryCtx | MutationCtx, plannerId: Id<"planners">, ref: SlotRef) {
+  return await ctx.db
+    .query("planSlots")
+    .withIndex("by_planner_and_date", (q) =>
+      q.eq("plannerId", plannerId).eq("date", ref.date).eq("meal", ref.meal),
+    )
+    .unique();
+}
+
+/** The name a slot shows: its recipe's title or its planner meal's name. */
+async function slotName(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
+  if (row.type === "cook") {
+    const recipe = row.recipeId === undefined ? null : await ctx.db.get(row.recipeId);
+    return recipe === null ? "" : cleanName(recipe.title);
+  }
+  if (row.type === "out" || row.type === "left") {
+    const meal = row.mealId === undefined ? null : await ctx.db.get(row.mealId);
+    return meal?.name ?? "";
+  }
+  return "";
+}
+
+export async function toSlotLike(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">): Promise<SlotLike> {
+  return {
+    date: row.date,
+    meal: row.meal,
+    type: row.type,
+    name: await slotName(ctx, row),
+    ...(row.type === "left" ? { from: row.from } : {}),
+  };
+}
+
+/** Rows from `from` to `to` inclusive, as the slot rules see them. */
+export async function loadSlots(
+  ctx: QueryCtx | MutationCtx,
+  plannerId: Id<"planners">,
+  from: string,
+  to: string,
+) {
+  const rows = await ctx.db
+    .query("planSlots")
+    .withIndex("by_planner_and_date", (q) =>
+      q.eq("plannerId", plannerId).gte("date", from).lte("date", to),
+    )
+    .take(2 * 31);
+  return await Promise.all(rows.map(async (row) => ({ row, slot: await toSlotLike(ctx, row) })));
+}
+
+async function writeSlot(
+  ctx: MutationCtx,
+  plannerId: Id<"planners">,
+  userId: Id<"users">,
+  ref: SlotRef,
+  value: SlotValue | null,
+) {
+  const existing = await slotRow(ctx, plannerId, ref);
+  if (value === null) {
+    if (existing !== null) await ctx.db.delete(existing._id);
+    return;
+  }
+  const document = { plannerId, date: ref.date, meal: ref.meal, updatedBy: userId, updatedAt: Date.now(), ...value };
+  if (existing === null) await ctx.db.insert("planSlots", document);
+  else await ctx.db.replace(existing._id, document);
+}
+
+/**
+ * The user's newest saved recipe whose title has the same meal key as
+ * `name`, or a new bare recipe in their book.
+ */
+async function resolveRecipe(ctx: MutationCtx, userId: Id<"users">, name: string) {
+  const key = mealKey(name);
+  const saved = await ctx.db
+    .query("savedRecipes")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .order("desc")
+    .take(RECIPE_SCAN_LIMIT);
+  for (const item of saved) {
+    const recipe = await ctx.db.get(item.recipeId);
+    if (recipe !== null && recipe.deletedAt === undefined && mealKey(recipe.title) === key) {
+      return { recipeId: recipe._id, name: cleanName(recipe.title) };
+    }
+  }
+  const recipeId = await insertUserRecipe(ctx, userId, { title: name, ingredients: [], instructions: [] });
+  return { recipeId, name };
+}
+
+/** The planner's eat-out or leftovers meal with the same key, or a new one. */
+async function resolvePlannerMeal(
+  ctx: MutationCtx,
+  plannerId: Id<"planners">,
+  userId: Id<"users">,
+  name: string,
+) {
+  const key = mealKey(name);
+  const existing = await ctx.db
+    .query("plannerMeals")
+    .withIndex("by_planner_and_key", (q) => q.eq("plannerId", plannerId).eq("key", key))
+    .first();
+  if (existing !== null) return { mealId: existing._id, name: existing.name };
+  const now = Date.now();
+  const mealId = await ctx.db.insert("plannerMeals", {
+    plannerId,
+    name,
+    key,
+    createdBy: userId,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { mealId, name };
+}
+
+/** The newest leftover choice for `ref`, or "other" (§2.3). */
+async function defaultLeftoverSource(ctx: MutationCtx, plannerId: Id<"planners">, ref: SlotRef) {
+  const slots = (await loadSlots(ctx, plannerId, addDays(ref.date, -6), ref.date)).map(({ slot }) => slot);
+  return leftoverChoices(slots, ref)[0] ?? ("other" as const);
+}
+
+/** Writes a slot of `type` named `name` (ignored for Leftovers and Skip). */
+async function planSlot(
+  ctx: MutationCtx,
+  plannerId: Id<"planners">,
+  userId: Id<"users">,
+  ref: SlotRef,
+  type: SlotType,
+  name: string,
+): Promise<{ type: SlotType; name: string }> {
+  if (type === "skip") {
+    await writeSlot(ctx, plannerId, userId, ref, { type: "skip" });
+    return { type, name: "" };
+  }
+  if (type === "left") {
+    const from = await defaultLeftoverSource(ctx, plannerId, ref);
+    await writeSlot(ctx, plannerId, userId, ref, { type: "left", from });
+    return { type, name: "" };
+  }
+  if (type === "cook") {
+    if (!name) {
+      await writeSlot(ctx, plannerId, userId, ref, { type: "cook" });
+      return { type, name: "" };
+    }
+    const recipe = await resolveRecipe(ctx, userId, name);
+    await writeSlot(ctx, plannerId, userId, ref, { type: "cook", recipeId: recipe.recipeId });
+    return { type, name: recipe.name };
+  }
+  if (!name) {
+    await writeSlot(ctx, plannerId, userId, ref, { type: "out" });
+    return { type, name: "" };
+  }
+  const meal = await resolvePlannerMeal(ctx, plannerId, userId, name);
+  await writeSlot(ctx, plannerId, userId, ref, { type: "out", mealId: meal.mealId });
+  return { type, name: meal.name };
+}
+
+const slotArgs = { plannerId: v.id("planners"), date: v.string(), meal: mealValidator };
+
+/** A type button: the selected type clears the slot, another replaces it (§2.3). */
+export const setType = mutation({
+  args: { ...slotArgs, type: slotTypeValidator },
+  returns: v.null(),
+  handler: async (ctx, { plannerId, date, meal, type }) => {
+    const { userId } = await requirePlanner(ctx, plannerId);
+    assertDate(date);
+    const ref = { date, meal };
+    const row = await slotRow(ctx, plannerId, ref);
+    if (row?.type === type) {
+      await writeSlot(ctx, plannerId, userId, ref, null);
+      return null;
+    }
+    const carried = row !== null && (row.type === "cook" || row.type === "out") ? await slotName(ctx, row) : "";
+    await planSlot(ctx, plannerId, userId, ref, type, carried);
+    return null;
+  },
+});
+
+/** Typed text committed into a slot's main input (§2.3 rules 2–6). */
+export const commitText = mutation({
+  args: { ...slotArgs, text: v.string() },
+  returns: v.object({ type: v.union(slotTypeValidator, v.null()), name: v.string() }),
+  handler: async (ctx, { plannerId, date, meal, text }) => {
+    const { userId } = await requirePlanner(ctx, plannerId);
+    assertDate(date);
+    if (isRecipeLink(text)) throw new Error("Paste recipe links with importLink");
+    const ref: SlotRef = { date, meal: meal as Meal };
+    const row = await slotRow(ctx, plannerId, ref);
+    if (row !== null && (row.type === "left" || row.type === "skip")) {
+      throw new Error("This slot has no text");
+    }
+    const currentName = row === null ? "" : await slotName(ctx, row);
+    if (row !== null && currentName === cleanName(text)) return { type: row.type, name: currentName };
+    const intent = parseSlotText(text, row?.type ?? null);
+    if (intent.kind !== "set") return { type: row?.type ?? null, name: currentName };
+    return await planSlot(ctx, plannerId, userId, ref, intent.type, intent.name);
   },
 });
