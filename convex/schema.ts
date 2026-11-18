@@ -44,6 +44,7 @@ export default defineSchema({
         v.literal("userInboxes"),
         v.literal("inboundEmails"),
         v.literal("recipeImports"),
+        v.literal("planner"),
         v.literal("groceryLists"),
       ),
     ),
