@@ -1,5 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { planSlotValidator, weekStartValidator } from "./lib/plannerValidators";
+import { aiErrorCodeValidator, aiProviderValidator } from "./lib/aiValidators";
 
 const importStatus = v.union(
   v.literal("queued"),
@@ -43,6 +45,7 @@ export default defineSchema({
         v.literal("userInboxes"),
         v.literal("inboundEmails"),
         v.literal("recipeImports"),
+        v.literal("planner"),
         v.literal("groceryLists"),
       ),
     ),
@@ -58,6 +61,24 @@ export default defineSchema({
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
   }).index("email", ["email"]),
+
+  // The provider, model and encrypted API key a user saved for AI features.
+  // Kept off `users`, whose whole row is sent to the browser. Only the hint is
+  // ever returned to a client; see `convex/lib/aiKeyCrypto.ts`.
+  aiSettings: defineTable({
+    userId: v.id("users"),
+    provider: aiProviderValidator,
+    // Unset means the provider default (Anthropic only).
+    model: v.optional(v.string()),
+    keyCiphertext: v.string(),
+    keyIv: v.string(),
+    keyScheme: v.literal(1),
+    keyHint: v.string(),
+    // Set when the key could not be decrypted, so Settings asks for it again.
+    unreadableAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
 
   // Maps each account to its AgentMail inbox. The AgentMail component keeps
   // message and thread contents in its isolated component tables.
@@ -114,6 +135,11 @@ export default defineSchema({
     recipeId: v.optional(v.id("recipes")),
     generatedGroceryListId: v.optional(v.id("groceryLists")),
     errorMessage: v.optional(v.string()),
+    // Set only by server code that knows the failure came from the user's AI
+    // settings or provider account, never inferred from an error message.
+    aiErrorCode: v.optional(aiErrorCodeValidator),
+    // Whether the latest failed extraction attempt was a provider rate limit.
+    extractionRateLimited: v.optional(v.boolean()),
     sourceMessageId: v.optional(v.string()),
     sourceEventId: v.optional(v.string()),
     sourceSubject: v.optional(v.string()),
@@ -309,6 +335,36 @@ export default defineSchema({
     .index("by_grocery_list_item", ["groceryListItemId"])
     .index("by_recipe", ["recipeId"])
     .index("by_recipe_ingredient", ["recipeIngredientId"]),
+
+  // A weekly meal planner. Owned by one user today; slots and planner meals
+  // reference the planner rather than the user so a household can own one
+  // later. Access always goes through `canAccessPlanner`.
+  planners: defineTable({
+    ownerId: v.id("users"),
+    weekStart: weekStartValidator,
+    people: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_owner", ["ownerId"]),
+
+  // Eat-out and other-leftovers meals. Cook slots point at recipes instead.
+  // `key` is `mealKey(name)` and is unique per planner.
+  plannerMeals: defineTable({
+    plannerId: v.id("planners"),
+    name: v.string(),
+    key: v.string(),
+    description: v.optional(v.string()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_planner_and_key", ["plannerId", "key"]),
+
+  // At most one row per planner, date and meal; an unplanned slot has none.
+  planSlots: defineTable(planSlotValidator).index("by_planner_and_date", [
+    "plannerId",
+    "date",
+    "meal",
+  ]),
 
   recipeSearchCache: defineTable({
     normalizedQuery: v.string(),

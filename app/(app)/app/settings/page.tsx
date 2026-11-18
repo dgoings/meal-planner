@@ -10,7 +10,7 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="Preferences"
         title="Settings"
-        description="Manage your profile, recipe inbox, and notification preferences."
+        description="Manage your profile, AI provider, and account."
       />
       <SettingsPanel />
     </div>

@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AiProviderSection } from "@/components/settings/ai-provider-section";
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 
@@ -108,6 +109,8 @@ function SettingsContent({ user }: { user: Doc<"users"> }) {
           </form>
         </CardContent>
       </Card>
+
+      <AiProviderSection />
 
       <Card>
         <CardContent>

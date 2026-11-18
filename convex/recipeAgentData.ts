@@ -52,6 +52,8 @@ export const ensureProcessingThread = internalMutation({
       agentThreadId: threadId,
       status: recipeImport.recipeId === undefined ? "processing" : recipeImport.status,
       errorMessage: undefined,
+      aiErrorCode: undefined,
+      extractionRateLimited: undefined,
       updatedAt: Date.now(),
     });
     return { threadId, userId: recipeImport.requestedBy };
@@ -239,6 +241,7 @@ export const persistGeneratedRecipe = internalMutation({
       agentWarnings: warnings,
       status: needsReview ? "needs_review" : "completed",
       errorMessage: undefined,
+      aiErrorCode: undefined,
       finishedAt: now,
       updatedAt: now,
     });

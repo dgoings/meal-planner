@@ -128,7 +128,7 @@ export const deleteAccount = mutation({
   },
 });
 
-type DeletionStage = "auth" | "savedRecipes" | "userInboxes" | "inboundEmails" | "recipeImports" | "groceryLists";
+type DeletionStage = "auth" | "savedRecipes" | "userInboxes" | "inboundEmails" | "recipeImports" | "planner" | "groceryLists";
 
 export const continueAccountDeletion = internalMutation({
   args: { userId: v.id("users") },
@@ -153,6 +153,9 @@ export const continueAccountDeletion = internalMutation({
         sessionIds: sessions.map((session) => session.sessionId),
       });
       await ctx.runMutation(components.authEmail.verifiedEmails.deleteUser, { userId });
+      // The saved AI key goes first, with the credentials.
+      const aiSettings = await ctx.db.query("aiSettings").withIndex("by_user", (q) => q.eq("userId", userId)).unique();
+      if (aiSettings !== null) await ctx.db.delete(aiSettings._id);
       await advance("savedRecipes");
       return null;
     }
@@ -179,7 +182,25 @@ export const continueAccountDeletion = internalMutation({
     if (user.deletionStage === "recipeImports") {
       const imports = await ctx.db.query("recipeImports").withIndex("by_requester", (q) => q.eq("requestedBy", userId)).take(50);
       await Promise.all(imports.map((item) => ctx.db.patch(item._id, { requestedBy: undefined })));
-      if (imports.length === 0) await advance("groceryLists"); else await schedule();
+      if (imports.length === 0) await advance("planner"); else await schedule();
+      return null;
+    }
+
+    if (user.deletionStage === "planner") {
+      // A household planner would pass to another member instead; today every
+      // planner has one owner, so it goes with the account.
+      const planner = await ctx.db.query("planners").withIndex("by_owner", (q) => q.eq("ownerId", userId)).first();
+      if (planner === null) {
+        await advance("groceryLists");
+        return null;
+      }
+      const slots = await ctx.db.query("planSlots").withIndex("by_planner_and_date", (q) => q.eq("plannerId", planner._id)).take(50);
+      const meals = slots.length > 0
+        ? []
+        : await ctx.db.query("plannerMeals").withIndex("by_planner_and_key", (q) => q.eq("plannerId", planner._id)).take(50);
+      await Promise.all([...slots, ...meals].map((document) => ctx.db.delete(document._id)));
+      if (slots.length === 0 && meals.length === 0) await ctx.db.delete(planner._id);
+      await schedule();
       return null;
     }
 

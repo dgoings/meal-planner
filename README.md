@@ -121,7 +121,12 @@ The frontend currently includes the following responsive, navigable flows:
   Recipe Book only when the user explicitly saves it. A failed import offers
   **Try again**. Resubmitting a link retries it automatically unless the agent
   already read the page and found no complete recipe; each link is limited to
-  five attempts.
+  five attempts. Imports run on the user's own AI key (see
+  [AI provider keys](#ai-provider-keys)): without one, Discover asks the user to
+  add a key in Settings, and forwarded emails show **Needs an AI key** with
+  **Try again**. An email whose import failed because of the user's provider
+  account (rejected key, no credit, rate limit, unknown model) shows the reason
+  and **Try again** too.
 - **Grocery lists:** list overview plus an interactive editor that can add,
   rename, check off, remove, restore, and change the quantity or unit of grocery
   items. Users can create recipe-named lists from saved recipe ingredients,
@@ -130,7 +135,7 @@ The frontend currently includes the following responsive, navigable flows:
   stored immediately. Changes made to the same list elsewhere appear in an
   open editor, and saving removes only the items that were removed in that
   editor. Items from recipes are grouped by store section.
-- **Settings:** profile details and account deletion.
+- **Settings:** profile details, the AI provider key, and account deletion.
 - **Design-system states:** responsive layouts, accessible focus behavior,
   loading skeletons, status badges, alerts, dialogs, empty-state scaffolding,
   and a custom not-found page.
@@ -179,7 +184,7 @@ bunx convex env set TAVILY_API_KEY
 Without the key, search shows a "not set up" message and pasted links keep
 working.
 
-### Recipe model provider
+### AI provider keys
 
 After the page is scraped, the Convex Agent component sends it to a language
 model (`convex/recipeAgent.ts`). It creates an editable recipe preview and
@@ -189,45 +194,43 @@ ingredients. Agent threads and messages are still persisted by the Convex Agent
 component, while normalized recipe and grocery data lives in the application's
 Convex tables.
 
-The model can come from Anthropic, OpenAI, or OpenRouter. Create an API key
-for one of them and store it only on the Convex deployment, under that
-provider's variable:
+Every AI feature runs on a key the user supplies. Under **Settings → AI
+provider**, each user picks Anthropic, OpenAI, or OpenRouter, enters a model,
+and pastes an API key; calls are billed to their own provider account. There is
+no deployment-level model key: a user without a saved key cannot import
+recipes until they add one.
 
-| Provider | `RECIPE_AGENT_PROVIDER` | API key variable |
-| --- | --- | --- |
-| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` |
-| OpenAI | `openai` | `OPENAI_API_KEY` |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
+- Anthropic's model is optional and defaults to `claude-sonnet-5`.
+- OpenAI and OpenRouter need a model that supports structured output. For
+  OpenRouter, use its `vendor/model` identifier; it is reached through the AI
+  SDK's OpenAI-compatible provider at `https://openrouter.ai/api/v1`.
+- Saving makes a free metadata call to the provider (no tokens): Anthropic's
+  model list checks the key, OpenAI's model lookup checks the key and model,
+  and OpenRouter's key and model endpoints check the key, the model, and its
+  structured-output support.
+- The key is encrypted with AES-256-GCM before it is stored, and is never sent
+  back to the browser; Settings shows only its last four characters.
 
-```sh
-bunx convex env set ANTHROPIC_API_KEY
-```
-
-When exactly one of these keys is set, that provider is used. When several are
-set, name the provider explicitly, or imports fail with a message asking for
-it:
-
-```sh
-bunx convex env set RECIPE_AGENT_PROVIDER openrouter
-```
-
-`RECIPE_AGENT_MODEL` names the model. It is optional for Anthropic, where the
-default is `claude-sonnet-5`, and required for OpenAI and OpenRouter, which
-have no default (for OpenRouter, use its `vendor/model` identifier). The model
-must support structured output:
+Keys are encrypted with `AI_KEY_ENCRYPTION_SECRET`, 32 random bytes as base64.
+Set a different value on every Convex deployment (your dev deployment,
+`staging`, and production):
 
 ```sh
-bunx convex env set RECIPE_AGENT_MODEL
+openssl rand -base64 32
+bunx convex env set AI_KEY_ENCRYPTION_SECRET                 # dev
+bunx convex env set AI_KEY_ENCRYPTION_SECRET --deployment staging
+bunx convex env set AI_KEY_ENCRYPTION_SECRET --prod
 ```
 
-Existing deployments that set only `ANTHROPIC_API_KEY` (and optionally
-`RECIPE_AGENT_MODEL`) keep working with no change. OpenRouter is reached
-through the AI SDK's OpenAI-compatible provider at
-`https://openrouter.ai/api/v1`.
+Without it, saving keys and every AI feature are refused. Changing it makes
+every saved key unreadable: each user is asked to paste their key again.
 
-No model API key belongs in the frontend, `.env.local`, or repository. A missing
-or inconsistent model configuration, like any other agent failure, is recorded
-on the import, and uncertain or truncated results are marked as needing review.
+No model API key belongs in the frontend, `.env.local`, the repository, or the
+Convex deployment environment. A failure caused by a user's key or provider
+account (rejected key, no credit, rate limit, unknown model, a model without
+structured output) is recorded on the import with a message telling them what
+to fix, and does not use up one of the five attempts. Uncertain or truncated
+results are marked as needing review.
 
 The backend exposes authenticated operations for editing recipe fields,
 instructions, ingredients, quantities, personal notes, grocery lists, and
@@ -325,8 +328,8 @@ In the Vercel project settings:
   to the Production environment only.
 
 On the production Convex deployment, set the site URL that the emailed links
-point at, alongside the Resend, recipe model, and AgentMail values described
-above:
+point at, alongside the Resend, `AI_KEY_ENCRYPTION_SECRET`, and AgentMail
+values described above:
 
 ```sh
 bunx convex env set SITE_URL https://perfectplate.vercel.app --prod
@@ -368,6 +371,34 @@ Render's free plan, which spins the service down when it is idle, so the first
 request after a quiet period waits while it starts again.
 
 ### Upgrading an existing deployment
+
+#### Bring-your-own AI keys
+
+The recipe model no longer reads `RECIPE_AGENT_PROVIDER`,
+`RECIPE_AGENT_MODEL`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
+`OPENROUTER_API_KEY`. To upgrade a deployment:
+
+1. Generate a secret with `openssl rand -base64 32` and set it with
+   `bunx convex env set AI_KEY_ENCRYPTION_SECRET` (plus `--prod` or
+   `--deployment <name>`) before deploying.
+2. Deploy as usual.
+3. Save your own provider key under **Settings → AI provider**.
+4. Remove the old variables, one at a time:
+
+   ```sh
+   bunx convex env remove RECIPE_AGENT_PROVIDER
+   bunx convex env remove RECIPE_AGENT_MODEL
+   bunx convex env remove ANTHROPIC_API_KEY
+   bunx convex env remove OPENAI_API_KEY
+   bunx convex env remove OPENROUTER_API_KEY
+   ```
+
+5. Revoke the old provider key if nothing else uses it.
+
+Imports in progress during the upgrade fail with a request to add an AI key,
+and can be retried once one is saved.
+
+#### Convex Auth 2.0
 
 This version moves to Convex Auth 2.0, which cannot yet migrate Convex Auth v1
 accounts. After upgrading, every user registers again. The v1 `users` rows stay

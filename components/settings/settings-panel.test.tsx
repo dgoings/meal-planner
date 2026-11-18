@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
 }));
 
+vi.mock("./ai-provider-section", () => ({ AiProviderSection: () => null }));
+
 vi.mock("@convex-dev/auth/react", () => ({
   useAuthActions: () => ({ signOut: mocks.signOut }),
 }));

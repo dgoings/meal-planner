@@ -5,8 +5,7 @@ import {
   mutation,
   type MutationCtx,
 } from "./_generated/server";
-import { normalizeRecipeUrl } from "./lib/urls";
-import { parseManualIngredient } from "./lib/manualIngredient";
+import { ingredientCatalogEntry, insertUserRecipe } from "./lib/userRecipes";
 
 const instructionValidator = v.object({
   position: v.number(),
@@ -113,70 +112,23 @@ export const createManual = mutation({
       throw new Error("A recipe needs between 1 and 100 instructions");
     }
     const sourceUrl = optionalString(args.sourceUrl ?? null);
-    const normalizedSourceUrl = sourceUrl
-      ? normalizeRecipeUrl(sourceUrl)
-      : `manual:${userId}:${Date.now()}`;
     const servings = args.servings ?? undefined;
     const prepTimeMinutes = args.prepTimeMinutes ?? undefined;
     const cookTimeMinutes = args.cookTimeMinutes ?? undefined;
-    if (servings !== undefined && servings !== null) finiteNumber(servings, "servings", 0, 1_000);
-    if (prepTimeMinutes !== undefined && prepTimeMinutes !== null) finiteNumber(prepTimeMinutes, "prepTimeMinutes", 0, 10_080);
-    if (cookTimeMinutes !== undefined && cookTimeMinutes !== null) finiteNumber(cookTimeMinutes, "cookTimeMinutes", 0, 10_080);
+    if (servings !== undefined) finiteNumber(servings, "servings", 0, 1_000);
+    if (prepTimeMinutes !== undefined) finiteNumber(prepTimeMinutes, "prepTimeMinutes", 0, 10_080);
+    if (cookTimeMinutes !== undefined) finiteNumber(cookTimeMinutes, "cookTimeMinutes", 0, 10_080);
 
-    const now = Date.now();
-    const importId = await ctx.db.insert("recipeImports", {
-      requestedBy: userId,
-      sourceUrl: sourceUrl ?? "",
-      normalizedUrl: normalizedSourceUrl,
-      status: "completed",
-      attemptCount: 0,
-      startedAt: now,
-      finishedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    const recipeId = await ctx.db.insert("recipes", {
-      importId,
-      sourceUrl: sourceUrl ?? "",
-      normalizedSourceUrl,
-      isPublic: false,
-      sourceSite: sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, "") : "Manual recipe",
+    return await insertUserRecipe(ctx, userId, {
       title,
       description: optionalString(args.description ?? null)?.slice(0, 2_000),
-      servings: servings === null ? undefined : servings,
-      prepTimeMinutes: prepTimeMinutes === null ? undefined : prepTimeMinutes,
-      cookTimeMinutes: cookTimeMinutes === null ? undefined : cookTimeMinutes,
-      totalTimeMinutes:
-        prepTimeMinutes !== undefined && prepTimeMinutes !== null && cookTimeMinutes !== undefined && cookTimeMinutes !== null
-          ? prepTimeMinutes + cookTimeMinutes
-          : undefined,
-      cuisines: [],
-      categories: [],
-      keywords: [],
-      instructions: instructions.map((text, index) => ({ position: index + 1, text })),
-      createdAt: now,
-      updatedAt: now,
+      sourceUrl,
+      servings,
+      prepTimeMinutes,
+      cookTimeMinutes,
+      ingredients,
+      instructions,
     });
-    await ctx.db.patch(importId, { recipeId });
-    await ctx.db.insert("savedRecipes", {
-      userId,
-      recipeId,
-      isFavorite: false,
-      createdAt: now,
-      updatedAt: now,
-    });
-    for (const [index, originalText] of ingredients.entries()) {
-      const parsed = parseManualIngredient(originalText);
-      const ingredientId = await ingredientCatalogEntry(ctx, parsed.name, parsed.normalizedName, parsed.unit);
-      await ctx.db.insert("recipeIngredients", {
-        recipeId,
-        ingredientId,
-        position: index + 1,
-        ...parsed,
-        isOptional: false,
-      });
-    }
-    return recipeId;
   },
 });
 
@@ -232,29 +184,6 @@ export const setCurrent = mutation({
     return null;
   },
 });
-
-async function ingredientCatalogEntry(
-  ctx: MutationCtx,
-  name: string,
-  normalizedName: string,
-  unit?: string,
-) {
-  const existing = await ctx.db
-    .query("ingredients")
-    .withIndex("by_normalized_name", (q) =>
-      q.eq("normalizedName", normalizedName),
-    )
-    .first();
-  if (existing !== null) return existing._id;
-  const now = Date.now();
-  return await ctx.db.insert("ingredients", {
-    name,
-    normalizedName,
-    defaultUnit: unit,
-    createdAt: now,
-    updatedAt: now,
-  });
-}
 
 export const updateCard = mutation({
   args: {
