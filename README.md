@@ -182,6 +182,20 @@ ingredients. Agent threads and messages are still persisted by the Convex Agent
 component, while normalized recipe and grocery data lives in the application's
 Convex tables.
 
+When the page publishes a complete schema.org `Recipe` in JSON-LD (a title,
+ingredients, and instructions), the preview is built from that data directly
+and no model is called (`convex/lib/recipeJsonLd.ts`). Ingredient lines are
+parsed and given a grocery aisle by keyword; these imports record
+`schema.org-json-ld` as their model. Pages without complete structured data
+go to the model as described below.
+
+Model output is cached by page URL for 30 days in `recipeExtractions` and shared
+across users, so a page someone has already imported is not sent to the model
+again. Before a page is sent, reader comments and reviews after the recipe are
+dropped and the page text is capped, more tightly when JSON-LD is also sent.
+The extraction step is retried once on failure, and each attempt is sent
+without the earlier attempts' messages from the agent thread.
+
 The model can come from Anthropic, OpenAI, or OpenRouter. Create an API key
 for one of them and store it only on the Convex deployment, under that
 provider's variable:
@@ -193,20 +207,21 @@ provider's variable:
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
 
 ```sh
-npx convex env set ANTHROPIC_API_KEY
+npx convex env set OPENAI_API_KEY
 ```
 
 When exactly one of these keys is set, that provider is used. When several are
-set, name the provider explicitly, or imports fail with a message asking for
-it:
+set, OpenAI is used if its key is among them; otherwise name the provider
+explicitly, or imports fail with a message asking for it:
 
 ```sh
 npx convex env set RECIPE_AGENT_PROVIDER openrouter
 ```
 
-`RECIPE_AGENT_MODEL` names the model. It is optional for Anthropic, where the
-default is `claude-sonnet-5`, and required for OpenAI and OpenRouter, which
-have no default (for OpenRouter, use its `vendor/model` identifier). The model
+`RECIPE_AGENT_MODEL` names the model. It is optional for OpenAI, where the
+default is `gpt-5-mini`, and for Anthropic, where the default is
+`claude-sonnet-5`. It is required for OpenRouter, which has no default (use
+its `vendor/model` identifier). The model
 must support structured output:
 
 ```sh

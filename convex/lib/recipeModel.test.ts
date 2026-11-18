@@ -28,10 +28,18 @@ describe("resolveRecipeModelConfig", () => {
     ).toEqual({ provider: "openrouter", model: "vendor/model", apiKey: "k" });
   });
 
-  it("requires RECIPE_AGENT_MODEL for OpenAI", () => {
-    expect(() => resolveRecipeModelConfig({ OPENAI_API_KEY: "k" })).toThrow(
-      /RECIPE_AGENT_MODEL/,
-    );
+  it("infers OpenAI with the default model from a lone OpenAI key", () => {
+    expect(resolveRecipeModelConfig({ OPENAI_API_KEY: "k" })).toEqual({
+      provider: "openai",
+      model: "gpt-5-mini",
+      apiKey: "k",
+    });
+  });
+
+  it("prefers OpenAI when several keys are set and no provider is named", () => {
+    expect(
+      resolveRecipeModelConfig({ ANTHROPIC_API_KEY: "a", OPENAI_API_KEY: "o" }),
+    ).toEqual({ provider: "openai", model: "gpt-5-mini", apiKey: "o" });
   });
 
   it("requires RECIPE_AGENT_MODEL for OpenRouter", () => {
@@ -40,7 +48,7 @@ describe("resolveRecipeModelConfig", () => {
     );
   });
 
-  it("refuses to guess when several keys are set and no provider is named", () => {
+  it("refuses to guess between several non-OpenAI keys when no provider is named", () => {
     expect(() =>
       resolveRecipeModelConfig({
         ANTHROPIC_API_KEY: "a",
@@ -70,11 +78,11 @@ describe("resolveRecipeModelConfig", () => {
     ).toThrow(/OPENAI_API_KEY/);
   });
 
-  it("requires RECIPE_AGENT_MODEL for a named non-Anthropic provider", () => {
+  it("requires RECIPE_AGENT_MODEL for a named provider with no default", () => {
     expect(() =>
       resolveRecipeModelConfig({
-        RECIPE_AGENT_PROVIDER: "openai",
-        OPENAI_API_KEY: "k",
+        RECIPE_AGENT_PROVIDER: "openrouter",
+        OPENROUTER_API_KEY: "k",
       }),
     ).toThrow(/RECIPE_AGENT_MODEL/);
   });

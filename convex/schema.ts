@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
+import { recipeExtractionValidator } from "./lib/recipeAgentTypes";
 
 const importStatus = v.union(
   v.literal("queued"),
@@ -154,6 +155,16 @@ export default defineSchema({
   })
     .index("by_import", ["importId"])
     .index("by_normalized_url", ["normalizedUrl"]),
+
+  // Model output keyed by page URL, shared across users so a page another
+  // user already imported does not pay for a second model call. It holds the
+  // raw extraction rather than a user's recipe, which they may have edited.
+  recipeExtractions: defineTable({
+    normalizedUrl: v.string(),
+    model: v.string(),
+    extraction: recipeExtractionValidator,
+    createdAt: v.number(),
+  }).index("by_normalized_url", ["normalizedUrl"]),
 
   // Canonical recipe content parsed from the source page. User-specific state
   // such as notes and favorites belongs in `savedRecipes` below.

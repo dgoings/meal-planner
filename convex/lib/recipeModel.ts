@@ -7,6 +7,12 @@ export type RecipeModelConfig = {
 };
 
 export const DEFAULT_ANTHROPIC_RECIPE_MODEL = "claude-sonnet-5";
+export const DEFAULT_OPENAI_RECIPE_MODEL = "gpt-5-mini";
+
+const DEFAULT_MODELS: Partial<Record<RecipeModelProvider, string>> = {
+  anthropic: DEFAULT_ANTHROPIC_RECIPE_MODEL,
+  openai: DEFAULT_OPENAI_RECIPE_MODEL,
+};
 
 const API_KEY_VARIABLES: Record<RecipeModelProvider, string> = {
   anthropic: "ANTHROPIC_API_KEY",
@@ -48,6 +54,8 @@ export function resolveRecipeModelConfig(
     provider = namedProvider;
   } else if (providersWithKeys.length === 1) {
     provider = providersWithKeys[0];
+  } else if (providersWithKeys.includes("openai")) {
+    provider = "openai";
   } else if (providersWithKeys.length === 0) {
     throw new Error(
       "No recipe model API key is configured on this Convex deployment; set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY",
@@ -69,9 +77,7 @@ export function resolveRecipeModelConfig(
   }
 
   const configuredModel = configured(env.RECIPE_AGENT_MODEL);
-  const model =
-    configuredModel ??
-    (provider === "anthropic" ? DEFAULT_ANTHROPIC_RECIPE_MODEL : undefined);
+  const model = configuredModel ?? DEFAULT_MODELS[provider];
   if (model === undefined) {
     throw new Error(
       `RECIPE_AGENT_MODEL must name a ${provider} model on this Convex deployment; there is no default for ${provider}`,
