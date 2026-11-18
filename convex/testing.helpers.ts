@@ -21,6 +21,9 @@ const TEST_CLIENT_IP = "203.0.113.7";
 
 export const TEST_PASSWORD = "correct horse battery staple";
 
+/** A fixed, fake AES key for tests (32 bytes of 0x07). Not a real secret. */
+export const TEST_AI_KEY_SECRET = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+
 export type AuthTest = ReturnType<typeof initAuthTest>;
 
 /**
