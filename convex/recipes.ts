@@ -203,7 +203,7 @@ export const currentId = query({
   },
 });
 
-async function canAccessRecipe(
+export async function canAccessRecipe(
   ctx: QueryCtx,
   userId: Id<"users">,
   recipe: Doc<"recipes">,

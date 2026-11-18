@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { api } from "./_generated/api";
+import { insertUserRecipe } from "./lib/userRecipes";
 import { initAuthTest, signedInUser, type AuthTest } from "./testing.helpers";
 
 async function plannerFor(t: AuthTest, email: string) {
@@ -7,6 +8,28 @@ async function plannerFor(t: AuthTest, email: string) {
   const plannerId = await user.as.mutation(api.planner.ensure, {});
   return { ...user, plannerId };
 }
+
+describe("insertUserRecipe", () => {
+  it("creates a bare recipe its creator owns and can fill in", async () => {
+    const t = initAuthTest();
+    const ada = await signedInUser(t, "ada@example.com");
+    const grace = await signedInUser(t, "grace@example.com");
+    const recipeId = await t.run((ctx) =>
+      insertUserRecipe(ctx, ada.userId, { title: "Chili", ingredients: [], instructions: [] }),
+    );
+
+    expect(await ada.as.query(api.recipes.listBook, {})).toEqual([
+      expect.objectContaining({ _id: recipeId, title: "Chili", sourceSite: "Manual recipe" }),
+    ]);
+    expect(await ada.as.query(api.recipes.get, { recipeId })).toMatchObject({
+      canEdit: true,
+      ingredients: [],
+      recipe: { instructions: [] },
+    });
+    await ada.as.mutation(api.recipeCards.addIngredient, { recipeId, name: "beans" });
+    expect(await grace.as.query(api.recipes.get, { recipeId })).toBeNull();
+  });
+});
 
 describe("planner access and preferences", () => {
   it("rejects anonymous callers", async () => {
