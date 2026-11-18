@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as aiSettings from "../aiSettings.js";
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as email from "../email.js";
@@ -18,6 +19,7 @@ import type * as lib_aiErrorCodes from "../lib/aiErrorCodes.js";
 import type * as lib_aiErrors from "../lib/aiErrors.js";
 import type * as lib_aiKeyCrypto from "../lib/aiKeyCrypto.js";
 import type * as lib_aiModel from "../lib/aiModel.js";
+import type * as lib_aiValidators from "../lib/aiValidators.js";
 import type * as lib_boundedFetch from "../lib/boundedFetch.js";
 import type * as lib_groceryCategory from "../lib/groceryCategory.js";
 import type * as lib_manualIngredient from "../lib/manualIngredient.js";
@@ -46,6 +48,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  aiSettings: typeof aiSettings;
   auth: typeof auth;
   crons: typeof crons;
   email: typeof email;
@@ -56,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   "lib/aiErrors": typeof lib_aiErrors;
   "lib/aiKeyCrypto": typeof lib_aiKeyCrypto;
   "lib/aiModel": typeof lib_aiModel;
+  "lib/aiValidators": typeof lib_aiValidators;
   "lib/boundedFetch": typeof lib_boundedFetch;
   "lib/groceryCategory": typeof lib_groceryCategory;
   "lib/manualIngredient": typeof lib_manualIngredient;

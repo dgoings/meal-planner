@@ -663,7 +663,17 @@ describe("user settings", () => {
         createdAt: now,
         updatedAt: now,
       });
-      return { savedRecipeId, groceryListId, inboxId };
+      const aiSettingsId = await ctx.db.insert("aiSettings", {
+        userId,
+        provider: "anthropic",
+        keyCiphertext: "placeholder",
+        keyIv: "placeholder",
+        keyScheme: 1,
+        keyHint: "1a2b",
+        createdAt: now,
+        updatedAt: now,
+      });
+      return { savedRecipeId, groceryListId, inboxId, aiSettingsId };
     });
 
     vi.useFakeTimers();

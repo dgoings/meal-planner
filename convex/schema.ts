@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { aiProviderValidator } from "./lib/aiValidators";
 
 const importStatus = v.union(
   v.literal("queued"),
@@ -58,6 +59,24 @@ export default defineSchema({
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
   }).index("email", ["email"]),
+
+  // The provider, model and encrypted API key a user saved for AI features.
+  // Kept off `users`, whose whole row is sent to the browser. Only the hint is
+  // ever returned to a client; see `convex/lib/aiKeyCrypto.ts`.
+  aiSettings: defineTable({
+    userId: v.id("users"),
+    provider: aiProviderValidator,
+    // Unset means the provider default (Anthropic only).
+    model: v.optional(v.string()),
+    keyCiphertext: v.string(),
+    keyIv: v.string(),
+    keyScheme: v.literal(1),
+    keyHint: v.string(),
+    // Set when the key could not be decrypted, so Settings asks for it again.
+    unreadableAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
 
   // Maps each account to its AgentMail inbox. The AgentMail component keeps
   // message and thread contents in its isolated component tables.
