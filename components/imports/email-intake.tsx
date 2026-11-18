@@ -37,6 +37,7 @@ export function EmailIntake() {
     failed: "Recipe failed to download",
     no_links: "No recipe links found",
     already_imported: "Recipes already imported",
+    needs_ai_key: "Needs an AI key",
   } as const;
   const activeEmail = recentEmails?.find((email) => email.status === "processing");
 

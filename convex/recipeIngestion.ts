@@ -1,6 +1,6 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { WorkflowManager } from "@convex-dev/workflow";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import {
@@ -10,6 +10,7 @@ import {
   mutation,
   type MutationCtx,
 } from "./_generated/server";
+import { aiReadiness, type AiReadiness } from "./aiSettings";
 import { aiErrorCodeIn } from "./lib/aiErrorCodes";
 import type { RecipeScrapePayload } from "./lib/recipeScrape";
 import { normalizeRecipeUrl } from "./lib/urls";
@@ -73,6 +74,10 @@ type QueueRecipeSourceArgs = {
   sourceMessageId?: string;
   sourceEventId?: string;
   sourceSubject?: string;
+  // Without a usable AI key, an import the user is waiting on is refused
+  // with ConvexError({ code }); a background import is recorded as failed
+  // with that code so the user can retry it after saving a key.
+  whenAiUnavailable: "throw" | "recordFailure";
 };
 
 type StartIngestion = (
@@ -101,6 +106,35 @@ async function restartImport(
     finishedAt: undefined,
     updatedAt: Date.now(),
   });
+}
+
+/**
+ * Null when the user's AI key is usable. Otherwise throws for interactive
+ * imports, or returns the code to record for background ones.
+ */
+async function aiUnavailable(
+  ctx: MutationCtx,
+  args: QueueRecipeSourceArgs,
+): Promise<Exclude<AiReadiness, "ready"> | null> {
+  const readiness = await aiReadiness(ctx, args.userId);
+  if (readiness === "ready") return null;
+  if (args.whenAiUnavailable === "throw") throw new ConvexError({ code: readiness });
+  return readiness;
+}
+
+async function recordAiUnavailable(
+  ctx: MutationCtx,
+  importId: Id<"recipeImports">,
+  code: Exclude<AiReadiness, "ready">,
+) {
+  const now = Date.now();
+  await ctx.db.patch(importId, {
+    status: "failed",
+    errorMessage: code,
+    finishedAt: now,
+    updatedAt: now,
+  });
+  return { importId, queued: false };
 }
 
 function boundedMetadata(value: string | undefined, maximum: number) {
@@ -150,16 +184,21 @@ export async function queueRecipeSource(
       ) {
         return { importId: existing._id, queued: false };
       }
+      const blocked = await aiUnavailable(ctx, args);
+      if (blocked !== null) return await recordAiUnavailable(ctx, existing._id, blocked);
       await restartImport(ctx, existing._id, startIngestion);
       return { importId: existing._id, queued: true };
     }
     if (existing.workflowId === undefined) {
+      const blocked = await aiUnavailable(ctx, args);
+      if (blocked !== null) return await recordAiUnavailable(ctx, existing._id, blocked);
       await restartImport(ctx, existing._id, startIngestion);
       return { importId: existing._id, queued: true };
     }
     return { importId: existing._id, queued: false };
   }
 
+  const blocked = await aiUnavailable(ctx, args);
   const now = Date.now();
   const importId = await ctx.db.insert("recipeImports", {
     requestedBy: args.userId,
@@ -171,11 +210,13 @@ export async function queueRecipeSource(
     sourceMessageId: boundedMetadata(args.sourceMessageId, 500),
     sourceEventId: boundedMetadata(args.sourceEventId, 500),
     sourceSubject: boundedMetadata(args.sourceSubject, 1_000),
-    status: "queued",
+    status: blocked === null ? "queued" : "failed",
+    ...(blocked === null ? {} : { errorMessage: blocked, finishedAt: now }),
     attemptCount: 0,
     createdAt: now,
     updatedAt: now,
   });
+  if (blocked !== null) return { importId, queued: false };
   const workflowId = await startIngestion(ctx, importId);
   await ctx.db.patch(importId, { workflowId });
   return { importId, queued: true };
@@ -192,6 +233,8 @@ export const retryImport = mutation({
       throw new Error("Recipe import was not found");
     }
     if (recipeImport.status !== "failed") return null;
+    const readiness = await aiReadiness(ctx, userId);
+    if (readiness !== "ready") throw new ConvexError({ code: readiness });
     if (recipeImport.attemptCount >= MAX_IMPORT_ATTEMPTS) {
       throw new Error("This recipe link has been retried too many times");
     }
@@ -214,6 +257,7 @@ export const queueAgentDiscoveredUrl = internalMutation({
     const queued = await queueRecipeSource(ctx, {
       ...args,
       sourceKind: "agent_discovery",
+      whenAiUnavailable: "recordFailure",
     });
     return queued.importId;
   },
@@ -239,6 +283,7 @@ export const queueDiscoveredUrl = mutation({
       sourceQuery: normalizedQuery,
       setAsCurrent,
       sourceKind: "agent_discovery",
+      whenAiUnavailable: "throw",
     });
     return queued.importId;
   },

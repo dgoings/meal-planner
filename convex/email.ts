@@ -12,6 +12,7 @@ import {
   optionalStringField,
   primaryRecipeLinkFromMessage,
 } from "./lib/urls";
+import { aiErrorCodeIn } from "./lib/aiErrorCodes";
 import { queueRecipeSource } from "./recipeIngestion";
 
 const inboundEmailStatus = v.union(
@@ -22,6 +23,7 @@ const inboundEmailStatus = v.union(
   v.literal("failed"),
   v.literal("no_links"),
   v.literal("already_imported"),
+  v.literal("needs_ai_key"),
 );
 
 function boundedField(value: unknown, key: string, maxLength: number) {
@@ -65,6 +67,8 @@ export const recentInboundEmails = query({
       linkCount: v.number(),
       status: inboundEmailStatus,
       recipeId: v.optional(v.id("recipes")),
+      // The failed import behind this email, for retrying it.
+      importId: v.optional(v.id("recipeImports")),
     }),
   ),
   handler: async (ctx) => {
@@ -101,9 +105,15 @@ export const recentInboundEmails = query({
           | "needs_review"
           | "failed"
           | "no_links"
-          | "already_imported";
+          | "already_imported"
+          | "needs_ai_key";
 
+        const aiCode = aiErrorCodeIn(ownedPrimaryImport?.errorMessage);
         if (email.linkCount === 0) status = "no_links";
+        else if (
+          ownedPrimaryImport?.status === "failed" &&
+          (aiCode === "ai_key_missing" || aiCode === "ai_key_unreadable")
+        ) status = "needs_ai_key";
         else if (ownedPrimaryImport?.status === "failed") status = "failed";
         else if (ownedPrimaryImport !== null && !["completed", "needs_review"].includes(ownedPrimaryImport.status)) status = "processing";
         else if (email.queuedCount === 0) status = "already_imported";
@@ -120,6 +130,7 @@ export const recentInboundEmails = query({
           linkCount: email.linkCount,
           status,
           recipeId,
+          importId: ownedPrimaryImport?.status === "failed" ? ownedPrimaryImport._id : undefined,
         };
       }),
     );
@@ -193,6 +204,7 @@ export const queueUrl = mutation({
       userId,
       sourceUrl,
       sourceKind: "direct",
+      whenAiUnavailable: "throw",
     });
     return queued.importId;
   },
@@ -264,6 +276,7 @@ export const onMessageReceived = internalMutation({
         userId: user._id,
         sourceUrl: normalizedUrl,
         sourceKind: "email",
+        whenAiUnavailable: "recordFailure",
         sourceMessageId,
         sourceEventId,
         sourceSubject,

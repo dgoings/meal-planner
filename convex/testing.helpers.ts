@@ -96,3 +96,23 @@ export async function signedInUser(t: AuthTest, email: string) {
     as: t.withIdentity(sessionIdentity(result.tokens)),
   };
 }
+
+/**
+ * Gives `userId` a saved AI key. The ciphertext is a placeholder: queueing
+ * checks only that a usable row exists, and never decrypts it.
+ */
+export async function giveAiKey(t: AuthTest, userId: Id<"users">) {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("aiSettings", {
+      userId,
+      provider: "anthropic",
+      keyCiphertext: "placeholder",
+      keyIv: "placeholder",
+      keyScheme: 1,
+      keyHint: "1a2b",
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+}
