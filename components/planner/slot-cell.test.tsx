@@ -161,6 +161,25 @@ describe("SlotCell editing", () => {
     });
   });
 
+  it("shows the stored name when retyped text matches it apart from case or punctuation", async () => {
+    const user = userEvent.setup();
+    mutation("commitText").mockResolvedValue({ type: "cook", name: "Chili" });
+    mutation("commitOther").mockResolvedValue({ name: "Pad thai" });
+    renderDays(["2026-11-16"], [
+      { date: "2026-11-16", meal: "lunch", type: "cook", name: "Chili" },
+      { date: "2026-11-16", meal: "dinner", type: "left", name: "Pad thai", from: "other" },
+    ]);
+    await user.clear(input("Monday lunch"));
+    await user.type(input("Monday lunch"), "chili!");
+    await user.tab();
+    expect(mutation("commitText")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", text: "chili!" });
+    expect(input("Monday lunch")).toHaveValue("Chili");
+
+    await user.clear(input("Monday dinner leftovers"));
+    await user.type(input("Monday dinner leftovers"), "PAD THAI{Enter}");
+    expect(input("Monday dinner leftovers")).toHaveValue("Pad thai");
+  });
+
   it("names other leftovers and moves on", async () => {
     const user = userEvent.setup();
     mutation("commitOther").mockResolvedValue({ name: "Pizza" });

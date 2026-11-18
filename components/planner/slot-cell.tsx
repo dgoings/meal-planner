@@ -153,16 +153,26 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
     setResultOpen(true);
   }
 
-  function commitMain(text: string) {
+  async function commitMain(text: string): Promise<Committed> {
     if (isRecipeLink(text)) {
       // The app's import flow: a preview the user reviews and saves (owner decision 15).
-      return run(async () => {
+      const saved = await run(async () => {
         const importId = await importLink({ plannerId, date, meal, url: text.trim() });
         announceRecipeImport(importId);
         showImport(importId);
       });
+      return saved ? {} : null;
     }
-    return run(() => commitText({ plannerId, date, meal, text }));
+    return runNamed(async () => (await commitText({ plannerId, date, meal, text })).name);
+  }
+
+  /** Runs a text commit; resolves to the name the server stored, `{}` if unknown, or null if it failed. */
+  async function runNamed(change: () => Promise<string>): Promise<Committed> {
+    let name: string | undefined;
+    const saved = await run(async () => {
+      name = await change();
+    });
+    return saved ? { name } : null;
   }
 
   return (
@@ -209,7 +219,7 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
               if (!saved) focusWhen.current = null;
             });
           }}
-          onCommitOther={(text) => run(() => commitOther({ plannerId, date, meal, text }))}
+          onCommitOther={(text) => runNamed(async () => (await commitOther({ plannerId, date, meal, text })).name)}
           onEnter={focusNext}
         />
       ) : (
@@ -233,6 +243,9 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
     </section>
   );
 }
+
+/** A commit's outcome: the name the server stored (when it says), or null if it failed. */
+type Committed = { name?: string } | null;
 
 type SlotInputHandle = {
   /**
@@ -266,7 +279,7 @@ function SlotInput({
   label: string;
   initial: string;
   placeholder: string;
-  onCommit: (text: string) => Promise<boolean>;
+  onCommit: (text: string) => Promise<Committed>;
   onEnter: () => void;
 }) {
   const [draft, setDraft] = useState(initial);
@@ -286,8 +299,19 @@ function SlotInput({
     if (draft === committed.current) return;
     const previous = committed.current;
     committed.current = draft;
-    void onCommit(draft).then((saved) => {
-      if (!saved) committed.current = previous;
+    const sent = draft;
+    void onCommit(sent).then((result) => {
+      if (result === null) {
+        committed.current = previous;
+        return;
+      }
+      // Retyping a stored name in another case or punctuation keeps the stored
+      // name, which may equal what is already shown as saved: show it, unless
+      // the user has typed on since.
+      const stored = result.name;
+      if (stored === undefined || committed.current !== sent) return;
+      committed.current = stored;
+      setDraft((current) => (current === sent ? stored : current));
     });
   }
 
@@ -342,7 +366,7 @@ function LeftoversBody({
   label: string;
   controlId: string;
   onChoose: (from: SlotRef | "other") => void;
-  onCommitOther: (text: string) => Promise<boolean>;
+  onCommitOther: (text: string) => Promise<Committed>;
   onEnter: () => void;
 }) {
   const choices = leftoverChoices(slots, slot);
