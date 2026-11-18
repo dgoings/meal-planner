@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, BookCheck, BookMinus, BookPlus, Check, Clock3, ExternalLink, Heart, Pencil, Save, Trash2, Users } from "lucide-react";
+import { ArrowLeft, BookCheck, BookPlus, Check, Clock3, ExternalLink, Heart, Pencil, Save, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
@@ -10,7 +10,6 @@ import { AddRecipeToListButton } from "@/components/grocery/add-recipe-to-list-b
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -19,19 +18,16 @@ import { FoodArt } from "./food-art";
 import { RecipeEditor } from "./recipe-editor";
 import { RecipeIngredients } from "./recipe-ingredients";
 import { CurrentRecipeButton } from "./current-recipe-button";
+import { RemoveRecipeButton } from "./remove-recipe-button";
 
 export function RecipeDetail({ recipeId }: { recipeId: string }) {
   const router = useRouter();
   const data = useQuery(api.recipes.get, { recipeId });
   const setNotes = useMutation(api.recipeCards.setNotes);
   const acknowledgeReview = useMutation(api.recipeCards.acknowledgeReview);
-  const removeCard = useMutation(api.recipeCards.removeCard);
   const addToBook = useMutation(api.recipeCards.addToBook);
-  const removeFromBook = useMutation(api.recipeCards.removeFromBook);
   const setFavorite = useMutation(api.recipeCards.setFavorite);
   const [servings, setServings] = useState<number | null>(null);
-  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
-  const [isRemoving, setIsRemoving] = useState(false);
   const [editing, setEditing] = useState(false);
   const [returnFocusToEdit, setReturnFocusToEdit] = useState(false);
   const notesRef = useRef<HTMLTextAreaElement>(null);
@@ -74,20 +70,6 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
       setMessage("Recipe added to your Recipe Book.");
     } catch {
       setError("We couldn’t add this recipe to your book.");
-    }
-  }
-
-  async function remove() {
-    setError("");
-    setIsRemoving(true);
-    try {
-      if (canEdit) await removeCard({ recipeId: recipeDocId });
-      else await removeFromBook({ recipeId: recipeDocId });
-      router.replace("/app/recipe-book");
-    } catch {
-      setIsRemoving(false);
-      setConfirmingRemoval(false);
-      setError("We couldn’t remove this recipe.");
     }
   }
 
@@ -136,14 +118,16 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
                 <CurrentRecipeButton recipeId={recipe._id} size="default" variant={saved === null ? "secondary" : "default"} />
                 <AddRecipeToListButton recipeId={recipe._id} variant="secondary" servings={servings ?? recipe.servings} baseServings={recipe.servings} />
               </div>
-              <div className="mt-4 flex flex-wrap items-center gap-1 border-t border-border pt-3">
+              <div className="recipe-detail-actions mt-4 flex flex-wrap items-center gap-1 border-t border-border pt-3">
                 {saved !== null && <Button variant="ghost" size="sm" aria-pressed={saved.isFavorite} onClick={() => void toggleFavorite()}><Heart size={16} fill={saved.isFavorite ? "currentColor" : "none"} />{saved.isFavorite ? "Favorited" : "Favorite"}</Button>}
                 {canEdit && <Button variant="ghost" size="sm" autoFocus={returnFocusToEdit} onClick={() => { setMessage(""); setEditing(true); }}><Pencil size={16} />Edit recipe</Button>}
                 {recipe.sourceUrl && <Button asChild variant="ghost" size="sm"><a href={recipe.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} />View original</a></Button>}
-                {canEdit
-                  ? <Button variant="ghost" size="sm" className="text-red-700 hover:bg-red-50" onClick={() => setConfirmingRemoval(true)}><Trash2 size={16} />Remove recipe</Button>
-                  : saved !== null && <Button variant="ghost" size="sm" className="text-red-700 hover:bg-red-50" onClick={() => setConfirmingRemoval(true)}><BookMinus size={16} />Remove from Recipe Book</Button>}
               </div>
+              {(canEdit || saved !== null) && (
+                <div className="recipe-detail-danger mt-3 border-t border-border pt-3">
+                  <RemoveRecipeButton recipeId={recipeDocId} title={recipe.title} owned={canEdit} onRemoved={() => router.replace("/app/recipe-book")} />
+                </div>
+              )}
             </div>
           </div>
 
@@ -158,20 +142,6 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
         ? <Card className="mt-8"><CardContent><h2 className="section-heading">Personal notes</h2><p className="section-copy">Only you can see these notes.</p><textarea ref={notesRef} aria-label="Personal notes" className="input mt-4 min-h-32 w-full resize-y" maxLength={10000} defaultValue={saved.notes ?? ""} placeholder="What would you change next time?" /><Button className="mt-3" variant="secondary" onClick={() => void saveNotes()}><Save size={16} />Save notes</Button></CardContent></Card>
         : <Card className="mt-8"><CardContent><h2 className="section-heading">Personal notes</h2><p className="section-copy">Add this recipe to your Recipe Book to keep notes on it.</p></CardContent></Card>}
 
-      <Dialog open={confirmingRemoval} onOpenChange={(open) => { if (!isRemoving) setConfirmingRemoval(open); }}>
-        <DialogContent>
-          <DialogTitle>{canEdit ? "Remove this recipe?" : "Remove from your Recipe Book?"}</DialogTitle>
-          <DialogDescription>
-            {canEdit
-              ? `${recipe.title} and your notes on it will be removed. Grocery lists made from it will remain.`
-              : `${recipe.title} and your notes on it will leave your Recipe Book. Grocery lists made from it will remain.`}
-          </DialogDescription>
-          <div className="mt-6 flex justify-end gap-3">
-            <Button variant="secondary" disabled={isRemoving} onClick={() => setConfirmingRemoval(false)}>Cancel</Button>
-            <Button variant="destructive" disabled={isRemoving} onClick={() => void remove()}>{isRemoving ? "Removing…" : "Remove"}</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

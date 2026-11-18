@@ -67,6 +67,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .button-secondary:hover, .button-ghost:hover { background: var(--surface-subtle); }
 .button-ghost { background: transparent; color: var(--foreground); }
 .button-destructive { background: #fbe8e8; color: var(--danger); }
+.button-destructive:hover { background: #f6d6d6; }
+/* Removal is a full-size, red-tinted button: a ghost button with a red text
+   utility renders in the ghost colour, because these unlayered component
+   rules outrank Tailwind's utilities layer. */
+.remove-recipe-button { min-height: 44px; }
 
 .input { min-height: 44px; width: 100%; border: 1px solid var(--border); border-radius: .5rem; background: var(--surface); color: var(--foreground); padding: .65rem .8rem; box-shadow: 0 1px 2px rgb(28 35 27 / .04); }
 .input.discovery-search-input { padding-left: 2.75rem; }
@@ -193,6 +198,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .grocery-row .item-source { grid-column: 2 / -1; margin-top: -.35rem; color: var(--muted-foreground); font-size: .7rem; }
 .recipe-detail-hero { display: grid; overflow: hidden; border: 1px solid var(--border); border-radius: 1rem; background: white; box-shadow: 0 14px 38px rgb(28 35 27 / .08); }
 .recipe-detail-hero .food-art { min-height: 320px; }
+@media (max-width: 767px) {
+  .recipe-detail-hero .food-art { min-height: 200px; }
+  .recipe-detail-actions .button, .recipe-card-remove .button { min-height: 44px; }
+}
 
 @media (max-width: 520px) {
   .marketing-nav { flex-wrap: wrap; gap: .5rem; padding-block: .75rem; }
