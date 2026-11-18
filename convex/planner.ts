@@ -18,6 +18,7 @@ import {
   addDays,
   isDateKey,
   leftoverChoices,
+  resolveLeftover,
   slotOrder,
   type SlotLike,
   type SlotRef,
@@ -596,6 +597,68 @@ export const week = query({
       }),
     );
     return { slots };
+  },
+});
+
+export const todaySlotValidator = v.object({
+  type: slotTypeValidator,
+  /** The recipe's title, typed name, eat-out or other-leftovers name; "" if none. */
+  name: v.string(),
+  /** A Cook slot's usable recipe. */
+  recipeId: v.optional(v.id("recipes")),
+  /** A Cook slot whose recipe was removed or can no longer be opened. */
+  recipeRemoved: v.optional(v.literal(true)),
+  /** The earlier meal a Leftovers slot eats; `name` is that meal's name. */
+  source: v.optional(
+    v.object({ date: v.string(), meal: mealValidator, recipeId: v.optional(v.id("recipes")) }),
+  ),
+});
+
+/**
+ * The caller's plan for `date` (their local calendar date, from the browser):
+ * one entry per meal they plan, in day order, with `slot` null when that
+ * meal is unplanned. A user with no planner yet gets no meals.
+ */
+export const today = query({
+  args: { date: v.string() },
+  returns: v.object({
+    meals: v.array(v.object({ meal: mealValidator, slot: v.union(v.null(), todaySlotValidator) })),
+  }),
+  handler: async (ctx, { date }) => {
+    const userId = await requireUser(ctx);
+    assertDate(date);
+    const planner = await ownPlanner(ctx, userId);
+    if (planner === null) return { meals: [] };
+    const meals = plannedMeals(planner.meals);
+    // Six days back, for the meals today's leftovers come from.
+    const loaded = await loadSlots(ctx, planner._id, addDays(date, -6), date, meals);
+    const slots = loaded.map(({ slot }) => slot);
+    const usableRecipe = (ref: SlotRef) => {
+      const found = loaded.find(({ slot }) => slot.date === ref.date && slot.meal === ref.meal);
+      return found?.cook?.usable ? found.cook.recipeId : undefined;
+    };
+    return {
+      meals: meals.map((meal) => {
+        const found = loaded.find(({ slot }) => slot.date === date && slot.meal === meal);
+        if (found === undefined) return { meal, slot: null };
+        const { slot, cook } = found;
+        const view: typeof todaySlotValidator.type = { type: slot.type, name: slot.name };
+        if (cook !== null && cook.recipeId !== undefined) {
+          if (cook.usable) view.recipeId = cook.recipeId;
+          else view.recipeRemoved = true;
+        }
+        if (slot.type === "left") {
+          const resolved = resolveLeftover(slots, slot);
+          if (resolved?.kind === "source") {
+            const { date: sourceDate, meal: sourceMeal } = resolved.source;
+            const recipeId = usableRecipe(resolved.source);
+            view.name = resolved.source.name;
+            view.source = { date: sourceDate, meal: sourceMeal, ...(recipeId === undefined ? {} : { recipeId }) };
+          }
+        }
+        return { meal, slot: view };
+      }),
+    };
   },
 });
 

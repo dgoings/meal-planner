@@ -590,6 +590,80 @@ describe("breakfast and meals to plan", () => {
   });
 });
 
+describe("today", () => {
+  const date = "2026-11-18";
+
+  it("gives a user with no planner an empty result without creating one", async () => {
+    const t = initAuthTest();
+    const { as } = await signedInUser(t, "ada@example.com");
+    expect(await as.query(api.planner.today, { date })).toEqual({ meals: [] });
+    expect(await as.query(api.planner.mine, {})).toBeNull();
+  });
+
+  it("lists every planned meal of the day in order, unplanned ones included", async () => {
+    const t = initAuthTest();
+    const { as } = await plannerFor(t, "ada@example.com");
+    expect(await as.query(api.planner.today, { date })).toEqual({
+      meals: [
+        { meal: "breakfast", slot: null },
+        { meal: "lunch", slot: null },
+        { meal: "dinner", slot: null },
+      ],
+    });
+  });
+
+  it("describes each kind of slot", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    const chili = await t.run((ctx) => insertUserRecipe(ctx, userId, { title: "Chili", ingredients: [], instructions: [] }));
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-17", meal: "dinner", text: "Chili" });
+    await as.mutation(api.planner.commitText, { plannerId, date, meal: "breakfast", text: "leftovers" });
+    await as.mutation(api.planner.commitText, { plannerId, date, meal: "lunch", text: "out at Thai Palace" });
+    await as.mutation(api.planner.commitText, { plannerId, date, meal: "dinner", text: "Grandma's soup" });
+
+    expect((await as.query(api.planner.today, { date })).meals).toEqual([
+      { meal: "breakfast", slot: { type: "left", name: "Chili", source: { date: "2026-11-17", meal: "dinner", recipeId: chili } } },
+      { meal: "lunch", slot: { type: "out", name: "Thai Palace" } },
+      { meal: "dinner", slot: { type: "cook", name: "Grandma's soup" } },
+    ]);
+
+    await as.mutation(api.planner.commitText, { plannerId, date, meal: "dinner", text: "" });
+    await as.mutation(api.planner.attachRecipe, { plannerId, date, meal: "dinner", recipeId: chili });
+    await as.mutation(api.planner.setType, { plannerId, date, meal: "lunch", type: "skip" });
+    await as.mutation(api.planner.setLeftoverOf, { plannerId, date, meal: "breakfast", from: "other" });
+    await as.mutation(api.planner.commitOther, { plannerId, date, meal: "breakfast", text: "Pizza" });
+    expect((await as.query(api.planner.today, { date })).meals).toEqual([
+      { meal: "breakfast", slot: { type: "left", name: "Pizza" } },
+      { meal: "lunch", slot: { type: "skip", name: "" } },
+      { meal: "dinner", slot: { type: "cook", name: "Chili", recipeId: chili } },
+    ]);
+
+    await as.mutation(api.recipeCards.removeCard, { recipeId: chili });
+    expect((await as.query(api.planner.today, { date })).meals[2]).toEqual({
+      meal: "dinner",
+      slot: { type: "cook", name: "", recipeRemoved: true },
+    });
+  });
+
+  it("leaves out meals that are not planned", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, date, meal: "breakfast", text: "Oats" });
+    await as.mutation(api.planner.updatePreferences, { plannerId, meals: ["dinner"] });
+    expect(await as.query(api.planner.today, { date })).toEqual({ meals: [{ meal: "dinner", slot: null }] });
+  });
+
+  it("shows only the caller's own planner and rejects bad dates and anonymous callers", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, date, meal: "lunch", text: "Secret" });
+    const grace = await plannerFor(t, "grace@example.com");
+    expect((await grace.as.query(api.planner.today, { date })).meals.every((meal) => meal.slot === null)).toBe(true);
+    await expect(as.query(api.planner.today, { date: "2026-02-30" })).rejects.toThrow(/Invalid date/);
+    await expect(t.query(api.planner.today, { date })).rejects.toThrow(/Unauthenticated/);
+  });
+});
+
 describe("importing a recipe link into a slot", () => {
   const lunch = { date: "2026-11-18", meal: "lunch" } as const;
   const url = "https://www.example.com/recipes/12345-best-chili.html";
