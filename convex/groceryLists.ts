@@ -21,6 +21,7 @@ import {
   validQuantity,
 } from "./lib/groceryMerge";
 import { parseManualIngredient } from "./lib/manualIngredient";
+import { notIncludedValidator } from "./lib/plannerValidators";
 
 const groceryListStatus = v.union(
   v.literal("active"),
@@ -51,6 +52,11 @@ const groceryListValidator = v.object({
   sourceRecipeIds: v.optional(v.array(v.id("recipes"))),
   status: groceryListStatus,
   completedAt: v.optional(v.number()),
+  plannerId: v.optional(v.id("planners")),
+  planWeekStart: v.optional(v.string()),
+  planSyncedAt: v.optional(v.number()),
+  planFingerprint: v.optional(v.string()),
+  planNotIncluded: v.optional(v.array(notIncludedValidator)),
   createdAt: v.number(),
   updatedAt: v.number(),
 });
@@ -68,6 +74,9 @@ const groceryListItemValidator = v.object({
   notes: v.optional(v.string()),
   isChecked: v.boolean(),
   sortOrder: v.number(),
+  planKey: v.optional(v.string()),
+  planQuantityText: v.optional(v.string()),
+  planUnit: v.optional(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
 });

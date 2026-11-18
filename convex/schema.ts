@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { planSlotValidator, weekStartValidator } from "./lib/plannerValidators";
+import { notIncludedValidator, planSlotValidator, weekStartValidator } from "./lib/plannerValidators";
 import { aiErrorCodeValidator, aiProviderValidator } from "./lib/aiValidators";
 
 const importStatus = v.union(
@@ -293,13 +293,22 @@ export default defineSchema({
     sourceRecipeIds: v.optional(v.array(v.id("recipes"))),
     status: groceryListStatus,
     completedAt: v.optional(v.number()),
+    // Set on the one list made from a planner week (`convex/plannerGrocery.ts`):
+    // the planner, the week's first day, when it was last updated from the
+    // plan, a summary of the plan at that time and the meals left out.
+    plannerId: v.optional(v.id("planners")),
+    planWeekStart: v.optional(v.string()),
+    planSyncedAt: v.optional(v.number()),
+    planFingerprint: v.optional(v.string()),
+    planNotIncluded: v.optional(v.array(notIncludedValidator)),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_status", ["userId", "status"])
     .index("by_user_and_client_request", ["userId", "clientRequestId"])
-    .index("by_user_and_source_recipe", ["userId", "sourceRecipeId"]),
+    .index("by_user_and_source_recipe", ["userId", "sourceRecipeId"])
+    .index("by_planner_and_week_start", ["plannerId", "planWeekStart"]),
 
   // An item may combine the same ingredient from several recipes. The source
   // rows in `groceryListItemSources` retain that provenance.
@@ -315,6 +324,12 @@ export default defineSchema({
     notes: v.optional(v.string()),
     isChecked: v.boolean(),
     sortOrder: v.number(),
+    // On a planner week's list, items derived from the plan carry the
+    // grocery's match key and the amount the plan last wrote. An item without
+    // `planKey` was added by hand and an update from the plan leaves it alone.
+    planKey: v.optional(v.string()),
+    planQuantityText: v.optional(v.string()),
+    planUnit: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -330,6 +345,8 @@ export default defineSchema({
     servingsMultiplier: v.number(),
     quantityAdded: v.optional(v.number()),
     quantityTextAdded: v.optional(v.string()),
+    // Written by an update from the plan, which replaces only these rows.
+    fromPlan: v.optional(v.boolean()),
     createdAt: v.number(),
   })
     .index("by_grocery_list_item", ["groceryListItemId"])
