@@ -119,7 +119,7 @@ export const updatePreferences = mutation({
 
 const RECIPE_SCAN_LIMIT = 500;
 
-type SlotValue =
+export type SlotValue =
   | { type: "cook"; recipeId?: Id<"recipes">; name?: string; importId?: Id<"recipeImports">; importName?: string }
   | { type: "out"; mealId?: Id<"plannerMeals"> }
   | { type: "left"; from: SlotRef | "other"; mealId?: Id<"plannerMeals"> }
@@ -162,7 +162,7 @@ async function importedRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">
  * owner can no longer open it; the slot then behaves as unlinked: no name, so
  * it is no leftovers source and retyping the title links a recipe again.
  */
-async function cookRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
+export async function cookRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
   const imported = await importedRecipe(ctx, row);
   const recipeId = row.type === "cook" ? (row.recipeId ?? imported?.recipeId) : undefined;
   const recipe = recipeId === undefined ? null : await ctx.db.get(recipeId);
@@ -228,7 +228,7 @@ export async function loadSlots(
   );
 }
 
-async function writeSlot(
+export async function writeSlot(
   ctx: MutationCtx,
   plannerId: Id<"planners">,
   userId: Id<"users">,

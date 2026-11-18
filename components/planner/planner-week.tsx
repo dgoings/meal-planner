@@ -14,8 +14,10 @@ import {
   localDateKey,
   weekDates,
   weekStartOf,
+  weekSummary,
   type WeekStart,
 } from "@/convex/lib/plannerSlots";
+import { CopyWeekButton } from "./copy-week-dialog";
 import { DayCard, dayCardId } from "./day-card";
 import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
 import { PlannerPickerProvider } from "./slot-combobox";
@@ -163,10 +165,18 @@ export function PlannerWeek() {
             </Button>
           )}
         </div>
-        <Button variant="ghost" size="sm" disabled={!planner} onClick={() => setSettingsOpen(true)}>
-          <Settings2 size={17} aria-hidden="true" />
-          Planner settings
-        </Button>
+        <div className="planner-toolbar-actions">
+          <CopyWeekButton
+            plannerId={planner?.plannerId}
+            start={start}
+            planned={week ? weekSummary(week.slots, start).planned : 0}
+            disabled={!week}
+          />
+          <Button variant="ghost" size="sm" disabled={!planner} onClick={() => setSettingsOpen(true)}>
+            <Settings2 size={17} aria-hidden="true" />
+            Planner settings
+          </Button>
+        </div>
       </div>
 
       {planner === undefined || planner === null || week === undefined ? (
