@@ -1,6 +1,5 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConvexError } from "convex/values";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EmailIntake } from "./email-intake";
 
@@ -197,13 +196,17 @@ describe("EmailIntake", () => {
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(mocks.retryImport).toHaveBeenCalledWith({ importId: "import-1" });
 
-    mocks.retryImport.mockRejectedValue(new ConvexError({ code: "ai_key_missing" }));
+    expect(
+      screen.getByText("This page needs AI to read the recipe. Add an AI key in Settings, then choose Try again."),
+    ).toBeInTheDocument();
+
+    mocks.retryImport.mockRejectedValue(new Error("This recipe link has been retried too many times"));
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText("Add an AI key in Settings, then try again.")).toBeInTheDocument();
+    expect(await screen.findByText("This link can’t be retried again.")).toBeInTheDocument();
   });
 
-  it("warns that forwarded recipes need a key only while none is saved", () => {
-    const banner = /^Forwarded recipes won’t import until you add an AI key in Settings\./;
+  it("notes what imports without a key only while none is saved", () => {
+    const banner = /^Without an AI key, only pages that publish complete recipe data can be imported\./;
     const { rerender } = render(<EmailIntake />);
     expect(screen.queryByText(banner)).not.toBeInTheDocument();
 

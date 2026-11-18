@@ -1,6 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConvexError } from "convex/values";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RecipeLinkImport } from "./recipe-link-import";
 
@@ -86,58 +85,44 @@ describe("RecipeLinkImport", () => {
     );
   });
 
-  it("asks for an AI key when the import is refused for lack of one", async () => {
-    mocks.queueUrl.mockRejectedValue(new ConvexError({ code: "ai_key_missing" }));
-    const user = userEvent.setup();
-    render(<RecipeLinkImport />);
-
-    await user.type(screen.getByRole("textbox", { name: "Recipe URL" }), "https://example.com/recipe");
-    await user.click(screen.getByRole("button", { name: "Import recipe" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Add an AI key to import recipes");
-    expect(alert).toHaveTextContent(
-      "Recipe import runs on your own AI provider key. Add one in Settings, then paste the link again.",
-    );
-    expect(screen.getByRole("link", { name: "Go to Settings" })).toHaveAttribute(
-      "href",
-      "/app/settings#ai-provider",
-    );
-  });
-
-  it("notes that import needs a key only while none is saved", () => {
+  it("notes what imports without a key while none is saved", () => {
     const notice = (_: string, element: Element | null) =>
       element?.tagName === "P" &&
-      element.textContent === "Recipe import needs your AI provider key. Add one in Settings.";
+      element.textContent ===
+        "Without an AI key, only pages that publish complete recipe data can be imported. Add one in Settings.";
     const { rerender } = render(<RecipeLinkImport />);
     expect(screen.queryByText(notice)).not.toBeInTheDocument();
 
     mocks.aiSettings = { encryptionAvailable: true, settings: null };
     rerender(<RecipeLinkImport />);
     expect(screen.getByText(notice)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import recipe" })).toBeEnabled();
     expect(screen.getByRole("link", { name: "Add one in Settings." })).toHaveAttribute(
       "href",
       "/app/settings#ai-provider",
     );
   });
 
-  it("explains a retry refused for lack of a key", async () => {
+  it("imports without a key and explains when the page needs AI", async () => {
+    mocks.aiSettings = { encryptionAvailable: true, settings: null };
     mocks.result.status = "failed";
     mocks.result.recipeId = "";
     Object.assign(mocks.result, { errorMessage: "ai_key_missing", aiErrorCode: "ai_key_missing" });
-    mocks.queueUrl
-      .mockResolvedValueOnce("import-123")
-      .mockRejectedValueOnce(new ConvexError({ code: "ai_key_missing" }));
     const user = userEvent.setup();
     render(<RecipeLinkImport />);
 
     await user.type(screen.getByRole("textbox", { name: "Recipe URL" }), "https://example.com/recipe");
     await user.click(screen.getByRole("button", { name: "Import recipe" }));
     const dialog = await screen.findByRole("dialog", { name: "Recipe result" });
+    expect(mocks.queueUrl).toHaveBeenCalledWith({ sourceUrl: "https://example.com/recipe" });
     expect(dialog).toHaveTextContent(
-      "Add an AI key in Settings to import this recipe, then choose Try again.",
+      "This page needs AI to read the recipe. Add an AI key in Settings, then choose Try again.",
+    );
+    expect(screen.getByRole("link", { name: "Go to Settings" })).toHaveAttribute(
+      "href",
+      "/app/settings#ai-provider",
     );
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText("Add an AI key in Settings, then try again.")).toBeInTheDocument();
+    expect(mocks.queueUrl).toHaveBeenLastCalledWith({ importId: "import-123" });
   });
 });

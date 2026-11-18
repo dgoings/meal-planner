@@ -33,33 +33,11 @@ import { aiProviderValidator } from "./lib/aiValidators";
 const MIN_KEY_LENGTH = 8;
 const MAX_KEY_LENGTH = 500;
 
-export type AiReadiness =
-  | "ready"
-  | "ai_key_missing"
-  | "ai_key_unreadable"
-  | "ai_not_configured";
-
 async function settingsFor(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
   return await ctx.db
     .query("aiSettings")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .unique();
-}
-
-/**
- * Whether AI features can run for `userId`, judged from the saved row and the
- * shape of the deployment secret. It does not decrypt, so a rotated secret is
- * only noticed after the first failed decryption marks the row.
- */
-export async function aiReadiness(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<"users">,
-): Promise<AiReadiness> {
-  if (!encryptionSecretAvailable(env.AI_KEY_ENCRYPTION_SECRET)) return "ai_not_configured";
-  const settings = await settingsFor(ctx, userId);
-  if (settings === null) return "ai_key_missing";
-  if (settings.unreadableAt !== undefined) return "ai_key_unreadable";
-  return "ready";
 }
 
 /** The signed-in user's AI settings, without the key. */

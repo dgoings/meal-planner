@@ -106,20 +106,4 @@ describe("RecipeSearch", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("try another result");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
-
-  it("asks for an AI key when importing a result is refused for lack of one", async () => {
-    mocks.queueDiscoveredUrl.mockRejectedValue(new ConvexError({ code: "ai_key_missing" }));
-    const user = userEvent.setup();
-    render(<RecipeSearch />);
-
-    await searchFor(user, "lentil stew");
-    const results = await screen.findByRole("list", { name: "Recipes for lentil stew" });
-    await user.click(within(results).getByRole("button", { name: "Import recipe" }));
-
-    expect(await screen.findByText("Add an AI key to import recipes")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Go to Settings" })).toHaveAttribute(
-      "href",
-      "/app/settings#ai-provider",
-    );
-  });
 });

@@ -3,7 +3,7 @@ import type { AiErrorCode } from "@/convex/lib/aiErrorCodes";
 
 /** What each AI failure means for the user, wherever it is shown. */
 export const AI_ERROR_COPY: Record<AiErrorCode, string> = {
-  ai_key_missing: "Add an AI key in Settings to import this recipe, then choose Try again.",
+  ai_key_missing: "This page needs AI to read the recipe. Add an AI key in Settings, then choose Try again.",
   ai_key_unreadable: "Your saved AI key can no longer be read. Paste it again in Settings, then try again.",
   ai_not_configured: "AI features aren’t available on this PerfectPlate deployment right now. Contact the person who runs it.",
   ai_key_invalid: "Your AI provider rejected your key. Update it in Settings, then try again.",
@@ -42,18 +42,4 @@ export function convexErrorCode(error: unknown): string | undefined {
   if (!(error instanceof ConvexError)) return undefined;
   const code = (error.data as { code?: unknown } | undefined)?.code;
   return typeof code === "string" ? code : undefined;
-}
-
-/** Codes meaning the user has no usable AI key right now. */
-export function isMissingKeyCode(code: string | undefined) {
-  return code === "ai_key_missing" || code === "ai_key_unreadable" || code === "ai_not_configured";
-}
-
-/** Why a retry was refused for lack of a usable key, or undefined for other refusals. */
-export function retryFailureMessage(error: unknown) {
-  const code = convexErrorCode(error);
-  if (!isMissingKeyCode(code)) return undefined;
-  return code === "ai_not_configured"
-    ? AI_ERROR_COPY.ai_not_configured
-    : "Add an AI key in Settings, then try again.";
 }

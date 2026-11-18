@@ -2,7 +2,6 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { BookOpen, Check, Clipboard, Inbox, LoaderCircle, Mail, MailCheck, RotateCcw } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -10,9 +9,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { AI_SETTINGS_HREF } from "@/components/discovery/ai-key-required-alert";
+import { AiKeyNote } from "@/components/discovery/ai-key-note";
 import { RecipePreviewModal } from "@/components/recipes/recipe-preview-modal";
-import { recipeImportFailureMessage, retryFailureMessage } from "@/lib/recipe-import-errors";
+import { recipeImportFailureMessage } from "@/lib/recipe-import-errors";
 
 export function EmailIntake() {
   const inbox = useQuery(api.email.currentInbox);
@@ -25,11 +24,8 @@ export function EmailIntake() {
     setRetryFailure(null);
     try {
       await retryImport({ importId });
-    } catch (retryError) {
-      setRetryFailure({
-        emailId,
-        message: retryFailureMessage(retryError) ?? "This link can’t be retried again.",
-      });
+    } catch {
+      setRetryFailure({ emailId, message: "This link can’t be retried again." });
     }
   }
   const [copied, setCopied] = useState(false);
@@ -99,15 +95,7 @@ export function EmailIntake() {
             </div>
           </div>
 
-          {aiSettings?.settings === null && (
-            <Alert className="mt-6 border-amber-200 bg-amber-50" role="status">
-              <AlertTitle>Add an AI key</AlertTitle>
-              <AlertDescription>
-                Forwarded recipes won’t import until you add an AI key in Settings.{" "}
-                <Link className="font-bold underline" href={AI_SETTINGS_HREF}>Go to Settings</Link>
-              </AlertDescription>
-            </Alert>
-          )}
+          {aiSettings?.settings === null && <AiKeyNote className="mt-6" />}
 
           {activeEmail && (
             <div className="mt-6 flex flex-col gap-3 rounded-xl border border-primary/25 bg-primary-soft p-4 sm:flex-row sm:items-center" role="status">

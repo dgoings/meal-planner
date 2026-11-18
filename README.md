@@ -121,12 +121,13 @@ The frontend currently includes the following responsive, navigable flows:
   Recipe Book only when the user explicitly saves it. A failed import offers
   **Try again**. Resubmitting a link retries it automatically unless the agent
   already read the page and found no complete recipe; each link is limited to
-  five attempts. Imports run on the user's own AI key (see
-  [AI provider keys](#ai-provider-keys)): without one, Discover asks the user to
-  add a key in Settings, and forwarded emails show **Needs an AI key** with
-  **Try again**. An email whose import failed because of the user's provider
-  account (rejected key, no credit, rate limit, unknown model) shows the reason
-  and **Try again** too.
+  five attempts. Pages that need the model use the user's own AI key (see
+  [AI provider keys](#ai-provider-keys)). Without one, imports still start, and
+  pages with complete recipe data import as usual. A page that needs the model
+  fails with a request to add a key in Settings; forwarded emails show
+  **Needs an AI key** with **Try again**. An email whose import failed because
+  of the user's provider account (rejected key, no credit, rate limit, unknown
+  model) shows the reason and **Try again** too.
 - **Grocery lists:** list overview plus an interactive editor that can add,
   rename, check off, remove, restore, and change the quantity or unit of grocery
   items. Users can create recipe-named lists from saved recipe ingredients,
@@ -211,9 +212,11 @@ without the earlier attempts' messages from the agent thread.
 Every AI feature runs on a key the user supplies. Under **Settings → AI
 provider**, each user picks Anthropic, OpenAI, or OpenRouter, enters a model,
 and pastes an API key; calls are billed to their own provider account. There is
-no deployment-level model key: a user without a saved key cannot import
-recipes until they add one, even though pages with complete structured data
-or a cached result then import without calling the model.
+no deployment-level model key. A user without a saved key can still import:
+pages with complete structured data, or with a cached result, import without
+calling the model. A page that needs the model fails with a request to add a
+key in Settings, and **Try again** works once one is saved; that failure does
+not count toward the link's five attempts.
 
 - Anthropic's model is optional and defaults to `claude-sonnet-5`.
 - OpenAI and OpenRouter need a model that supports structured output. For

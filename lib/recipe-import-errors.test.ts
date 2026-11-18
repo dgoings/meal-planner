@@ -4,15 +4,13 @@ import { AI_ERROR_CODES } from "@/convex/lib/aiErrorCodes";
 import {
   AI_ERROR_COPY,
   convexErrorCode,
-  isMissingKeyCode,
   recipeImportFailureMessage,
-  retryFailureMessage,
 } from "./recipe-import-errors";
 
 describe("recipeImportFailureMessage", () => {
   it("explains each AI failure code", () => {
     expect(recipeImportFailureMessage(undefined, "ai_key_missing")).toBe(
-      "Add an AI key in Settings to import this recipe, then choose Try again.",
+      "This page needs AI to read the recipe. Add an AI key in Settings, then choose Try again.",
     );
     expect(recipeImportFailureMessage(undefined, "ai_key_invalid")).toBe(
       "Your AI provider rejected your key. Update it in Settings, then try again.",
@@ -66,23 +64,5 @@ describe("error code helpers", () => {
   it("reads the code from a ConvexError", () => {
     expect(convexErrorCode(new ConvexError({ code: "ai_key_missing" }))).toBe("ai_key_missing");
     expect(convexErrorCode(new Error("ai_key_missing"))).toBeUndefined();
-  });
-
-  it("recognizes codes that mean no usable key", () => {
-    expect(isMissingKeyCode("ai_key_missing")).toBe(true);
-    expect(isMissingKeyCode("ai_key_unreadable")).toBe(true);
-    expect(isMissingKeyCode("ai_not_configured")).toBe(true);
-    expect(isMissingKeyCode("ai_key_invalid")).toBe(false);
-    expect(isMissingKeyCode(undefined)).toBe(false);
-  });
-
-  it("explains a refused retry", () => {
-    expect(retryFailureMessage(new ConvexError({ code: "ai_key_missing" }))).toBe(
-      "Add an AI key in Settings, then try again.",
-    );
-    expect(retryFailureMessage(new ConvexError({ code: "ai_not_configured" }))).toBe(
-      AI_ERROR_COPY.ai_not_configured,
-    );
-    expect(retryFailureMessage(new Error("too many times"))).toBeUndefined();
   });
 });

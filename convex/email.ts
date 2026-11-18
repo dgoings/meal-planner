@@ -212,7 +212,6 @@ export const queueUrl = mutation({
       userId,
       sourceUrl,
       sourceKind: "direct",
-      whenAiUnavailable: "throw",
     });
     return queued.importId;
   },
@@ -284,7 +283,6 @@ export const onMessageReceived = internalMutation({
         userId: user._id,
         sourceUrl: normalizedUrl,
         sourceKind: "email",
-        whenAiUnavailable: "recordFailure",
         sourceMessageId,
         sourceEventId,
         sourceSubject,

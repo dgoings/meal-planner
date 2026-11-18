@@ -445,19 +445,6 @@ describe("SlotCell editing", () => {
       expect(await screen.findByRole("dialog", { name: "Recipe result" })).toBeInTheDocument();
     });
 
-    it("explains a missing AI key when importing from a link", async () => {
-      const user = userEvent.setup();
-      const { ConvexError } = await import("convex/values");
-      mutation("importLink").mockRejectedValue(new ConvexError({ code: "ai_key_missing" }));
-      renderDays(["2026-11-16"], [{ date: "2026-11-16", meal: "lunch", type: "cook", name: "Chili" }], picker);
-      await user.click(screen.getByRole("button", { name: "Import from link" }));
-      const dialog = await screen.findByRole("dialog", { name: "Import a recipe for Chili" });
-      await user.type(within(dialog).getByLabelText("Recipe link"), "https://example.com/chili");
-      await user.click(within(dialog).getByRole("button", { name: "Import recipe" }));
-      expect(within(dialog).getByRole("alert")).toHaveTextContent("Add an AI key to import recipes");
-      expect(within(dialog).getByRole("link", { name: "Go to Settings" })).toHaveAttribute("href", "/app/settings#ai-provider");
-    });
-
     it("lets a slot with a recipe change which recipe it uses", async () => {
       const user = userEvent.setup();
       renderDays(["2026-11-16"], [{

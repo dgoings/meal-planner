@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { RECIPE_IMPORT_STARTED_EVENT } from "@/lib/recipe-import-events";
-import { recipeImportFailureMessage, retryFailureMessage } from "@/lib/recipe-import-errors";
+import { recipeImportFailureMessage } from "@/lib/recipe-import-errors";
 import { ManualRecipeDialog } from "./manual-recipe-dialog";
 import { RecipePreviewModal } from "./recipe-preview-modal";
 
@@ -22,10 +22,10 @@ export function RecipeImportNotifications() {
     setRetryFailure(null);
     try {
       await retryImport({ importId });
-    } catch (error) {
+    } catch {
       setRetryFailure({
         importId,
-        message: retryFailureMessage(error) ?? "This link can’t be retried again. Add the recipe manually instead.",
+        message: "This link can’t be retried again. Add the recipe manually instead.",
       });
     }
   }

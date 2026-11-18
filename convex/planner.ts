@@ -742,7 +742,7 @@ export async function startSlotImport(
   const url = args.url.trim();
   if (!isRecipeLink(url)) throw new Error("Not a recipe link");
   const ref = { date: args.date, meal: args.meal };
-  const { importId } = await queueRecipeSource(ctx, { userId, sourceUrl: url, sourceKind: "direct", whenAiUnavailable: "throw" }, startIngestion);
+  const { importId } = await queueRecipeSource(ctx, { userId, sourceUrl: url, sourceKind: "direct" }, startIngestion);
   // A slot holding a typed name keeps it until the imported recipe is saved.
   const row = await slotRow(ctx, args.plannerId, ref);
   const typedName = row?.type === "cook" && row.recipeId === undefined ? row.name : undefined;

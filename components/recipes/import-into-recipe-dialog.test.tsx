@@ -1,7 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
-import { ConvexError } from "convex/values";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
 import { ImportIntoRecipeDialog } from "./import-into-recipe-dialog";
@@ -56,12 +55,18 @@ describe("ImportIntoRecipeDialog", () => {
     mocks.mutations = {};
   });
 
-  it("asks for an AI key, linking to Settings, when the user has none", async () => {
-    mutation("importIntoRecipe").mockRejectedValue(new ConvexError({ code: "ai_key_missing" }));
+  it("starts without a key and links to Settings when the page needs AI", async () => {
+    mutation("importIntoRecipe").mockResolvedValue("import-1");
+    mocks.queries["email:importResult"] = {
+      status: "failed",
+      sourceUrl: "https://example.com/best-chili",
+      errorMessage: "ai_key_missing",
+      aiErrorCode: "ai_key_missing",
+    };
     renderDialog();
     await submitLink();
     expect(mutation("importIntoRecipe")).toHaveBeenCalledWith({ recipeId, sourceUrl: "https://example.com/best-chili" });
-    expect(screen.getByRole("alert")).toHaveTextContent("Add an AI key to import recipes");
+    expect(screen.getByRole("alert")).toHaveTextContent("This page needs AI to read the recipe.");
     expect(screen.getByRole("link", { name: "Go to Settings" })).toHaveAttribute("href", "/app/settings#ai-provider");
   });
 

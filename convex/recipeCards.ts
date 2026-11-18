@@ -550,8 +550,7 @@ export const removeCard = mutation({
 /**
  * Starts the usual import of `sourceUrl` (a draft recipe the user previews)
  * for filling the owner's recipe `recipeId`. Nothing changes on that recipe
- * until `fillFromImport`. Without a usable AI key this throws
- * ConvexError({ code }), as every import the user waits on does.
+ * until `fillFromImport`.
  */
 export async function startRecipeFill(
   ctx: MutationCtx,
@@ -564,7 +563,7 @@ export async function startRecipeFill(
   if (!isRecipeLink(sourceUrl)) throw new Error("Paste a recipe link that starts with http:// or https://");
   const { importId } = await queueRecipeSource(
     ctx,
-    { userId, sourceUrl, sourceKind: "direct", whenAiUnavailable: "throw" },
+    { userId, sourceUrl, sourceKind: "direct" },
     startIngestion,
   );
   return importId;

@@ -668,15 +668,13 @@ describe("importing a recipe link into a slot", () => {
   const lunch = { date: "2026-11-18", meal: "lunch" } as const;
   const url = "https://www.example.com/recipes/12345-best-chili.html";
 
-  it("refuses a pasted link when the user has no AI key and leaves the slot alone", async () => {
+  it("starts a pasted link even when the user has no AI key", async () => {
     const t = initAuthTest();
     const { userId, plannerId } = await plannerFor(t, "ada@example.com");
-    const start = vi.fn();
-    await expect(
-      t.run((ctx) => startSlotImport(ctx, userId, { plannerId, ...lunch, url }, start)),
-    ).rejects.toMatchObject({ data: { code: "ai_key_missing" } });
-    expect(start).not.toHaveBeenCalled();
-    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toBeNull();
+    const start = vi.fn().mockResolvedValue("workflow-1");
+    const importId = await t.run((ctx) => startSlotImport(ctx, userId, { plannerId, ...lunch, url }, start));
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toMatchObject({ type: "cook", importId });
   });
 
   it("starts the existing import and shows the slot as pending until the recipe is saved", async () => {

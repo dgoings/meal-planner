@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { aiReadiness } from "./aiSettings";
 import { encryptApiKey } from "./lib/aiKeyCrypto";
 import type { AiProvider } from "./lib/aiModel";
 import {
@@ -137,22 +136,6 @@ describe("aiSettings storage", () => {
     await ada.as.mutation(api.aiSettings.remove, {});
     await ada.as.mutation(api.aiSettings.remove, {});
     expect((await rows(t)).map((row) => row.userId)).toEqual([grace.userId]);
-  });
-});
-
-describe("aiReadiness", () => {
-  it("reports each state without decrypting", async () => {
-    const t = initAuthTest();
-    const { userId } = await signedInUser(t, "ada@example.com");
-    const readiness = () => t.run(async (ctx) => await aiReadiness(ctx, userId));
-
-    expect(await readiness()).toBe("ai_key_missing");
-    const { keyIv } = await storeKey(t, userId);
-    expect(await readiness()).toBe("ready");
-    await t.mutation(internal.aiSettings.markUnreadable, { userId, keyIv });
-    expect(await readiness()).toBe("ai_key_unreadable");
-    vi.stubEnv("AI_KEY_ENCRYPTION_SECRET", "");
-    expect(await readiness()).toBe("ai_not_configured");
   });
 });
 

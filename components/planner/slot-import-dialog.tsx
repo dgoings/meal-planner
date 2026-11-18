@@ -3,7 +3,6 @@
 import { useMutation } from "convex/react";
 import { Link2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { AiKeyRequiredAlert } from "@/components/discovery/ai-key-required-alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -11,7 +10,6 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { Meal } from "@/convex/lib/plannerRules";
 import { announceRecipeImport } from "@/lib/recipe-import-events";
-import { convexErrorCode, isMissingKeyCode } from "@/lib/recipe-import-errors";
 import { usePlannerUndo } from "./planner-undo";
 
 /**
@@ -40,12 +38,10 @@ export function SlotImportDialog({
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [missingKeyCode, setMissingKeyCode] = useState<string | undefined>();
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    setMissingKeyCode(undefined);
     setBusy(true);
     expectChange();
     try {
@@ -54,10 +50,8 @@ export function SlotImportDialog({
       setUrl("");
       onOpenChange(false);
       onStarted(importId);
-    } catch (failure) {
-      const code = convexErrorCode(failure);
-      if (isMissingKeyCode(code)) setMissingKeyCode(code);
-      else setError("We couldn’t import that link. Check that it starts with https:// and try again.");
+    } catch {
+      setError("We couldn’t import that link. Check that it starts with https:// and try again.");
     } finally {
       setBusy(false);
     }
@@ -77,7 +71,6 @@ export function SlotImportDialog({
           </label>
           <Button type="submit" disabled={busy}><Link2 size={17} aria-hidden="true" />{busy ? "Starting import…" : "Import recipe"}</Button>
         </form>
-        {missingKeyCode !== undefined && <AiKeyRequiredAlert code={missingKeyCode} />}
         {error && <p className="mt-3 text-sm font-bold text-red-700" role="alert">{error}</p>}
       </DialogContent>
     </Dialog>

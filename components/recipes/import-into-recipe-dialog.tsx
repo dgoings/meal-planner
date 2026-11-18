@@ -4,13 +4,13 @@ import { useMutation, useQuery } from "convex/react";
 import { Link2, LoaderCircle, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
-import { AiKeyRequiredAlert, AI_SETTINGS_HREF } from "@/components/discovery/ai-key-required-alert";
+import { AI_SETTINGS_HREF } from "@/components/discovery/ai-key-note";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { convexErrorCode, isMissingKeyCode, recipeImportFailureMessage } from "@/lib/recipe-import-errors";
+import { recipeImportFailureMessage } from "@/lib/recipe-import-errors";
 
 /**
  * "Import from link" on a recipe the user owns: runs the usual import, shows
@@ -40,7 +40,6 @@ export function ImportIntoRecipeDialog({
   const [importId, setImportId] = useState<Id<"recipeImports"> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [missingKeyCode, setMissingKeyCode] = useState<string | undefined>();
   const [useImportedTitle, setUseImportedTitle] = useState(false);
 
   const result = useQuery(api.email.importResult, importId === null ? "skip" : { importId });
@@ -51,7 +50,6 @@ export function ImportIntoRecipeDialog({
   function reset() {
     setImportId(null);
     setError("");
-    setMissingKeyCode(undefined);
     setUseImportedTitle(false);
   }
 
@@ -62,10 +60,8 @@ export function ImportIntoRecipeDialog({
     try {
       const queued = await importIntoRecipe({ recipeId, sourceUrl: url.trim() });
       setImportId(queued);
-    } catch (failure) {
-      const code = convexErrorCode(failure);
-      if (isMissingKeyCode(code)) setMissingKeyCode(code);
-      else setError("We couldn’t import that link. Check that it starts with https:// and try again.");
+    } catch {
+      setError("We couldn’t import that link. Check that it starts with https:// and try again.");
     } finally {
       setBusy(false);
     }
@@ -159,7 +155,6 @@ export function ImportIntoRecipeDialog({
             </div>
           </div>
         )}
-        {missingKeyCode !== undefined && <AiKeyRequiredAlert code={missingKeyCode} />}
         {error && <p className="mt-3 text-sm font-bold text-red-700" role="alert">{error}</p>}
       </DialogContent>
     </Dialog>

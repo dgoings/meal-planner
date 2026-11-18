@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { insertUserRecipe } from "./lib/userRecipes";
-import { giveAiKey, initAuthTest, signedInUser, TEST_AI_KEY_SECRET, type AuthTest } from "./testing.helpers";
+import { initAuthTest, signedInUser, TEST_AI_KEY_SECRET, type AuthTest } from "./testing.helpers";
 
 beforeEach(() => {
   vi.stubEnv("AI_KEY_ENCRYPTION_SECRET", TEST_AI_KEY_SECRET);
@@ -102,7 +102,7 @@ async function ingredientsOf(t: AuthTest, recipeId: Id<"recipes">) {
 describe("importing a link into an existing recipe", () => {
   const url = "https://www.example.com/best-chili";
 
-  it("starts the usual import for the owner, and refuses without an AI key or for someone else's recipe", async () => {
+  it("starts the usual import for the owner, with or without an AI key, and refuses someone else's recipe", async () => {
     const t = initAuthTest();
     const ada = await signedInUser(t, "ada@example.com");
     const grace = await signedInUser(t, "grace@example.com");
@@ -110,16 +110,11 @@ describe("importing a link into an existing recipe", () => {
     const { startRecipeFill } = await import("./recipeCards");
     const start = vi.fn().mockResolvedValue("workflow-1");
 
-    await expect(t.run((ctx) => startRecipeFill(ctx, ada.userId, { recipeId: chili, sourceUrl: url }, start)))
-      .rejects.toMatchObject({ data: { code: "ai_key_missing" } });
-    expect(start).not.toHaveBeenCalled();
-
-    await giveAiKey(t, grace.userId);
     await expect(t.run((ctx) => startRecipeFill(ctx, grace.userId, { recipeId: chili, sourceUrl: url }, start))).rejects.toThrow(/Forbidden/);
     await expect(grace.as.mutation(api.recipeCards.importIntoRecipe, { recipeId: chili, sourceUrl: url })).rejects.toThrow(/Forbidden/);
 
-    await giveAiKey(t, ada.userId);
     await expect(t.run((ctx) => startRecipeFill(ctx, ada.userId, { recipeId: chili, sourceUrl: "chili" }, start))).rejects.toThrow(/link/);
+    // Ada has no AI key: the import still starts.
     const importId = await t.run((ctx) => startRecipeFill(ctx, ada.userId, { recipeId: chili, sourceUrl: ` ${url} ` }, start));
     expect(start).toHaveBeenCalledTimes(1);
     expect(await t.run((ctx) => ctx.db.get(importId))).toMatchObject({ requestedBy: ada.userId, sourceUrl: url, status: "queued" });
