@@ -331,7 +331,11 @@ export function GroceryListEditor({
               <Button
                 className="mt-5 w-full"
                 onClick={persistList}
-                disabled={saveState === "saving" || listName.trim().length === 0}
+                disabled={
+                  saveState === "saving" ||
+                  listName.trim().length === 0 ||
+                  (!dirty && !needsInitialSave)
+                }
               >
                 <Save size={17} />
                 {saveState === "saving"
