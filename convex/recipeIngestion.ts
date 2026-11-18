@@ -11,7 +11,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { aiReadiness, type AiReadiness } from "./aiSettings";
-import { aiErrorCodeIn } from "./lib/aiErrorCodes";
+import { aiErrorCodeValidator } from "./lib/aiValidators";
 import type { RecipeScrapePayload } from "./lib/recipeScrape";
 import { normalizeRecipeUrl } from "./lib/urls";
 
@@ -103,6 +103,7 @@ async function restartImport(
     workflowId,
     status: "queued",
     errorMessage: undefined,
+    aiErrorCode: undefined,
     finishedAt: undefined,
     updatedAt: Date.now(),
   });
@@ -131,6 +132,7 @@ async function recordAiUnavailable(
   await ctx.db.patch(importId, {
     status: "failed",
     errorMessage: code,
+    aiErrorCode: code,
     finishedAt: now,
     updatedAt: now,
   });
@@ -211,7 +213,9 @@ export async function queueRecipeSource(
     sourceEventId: boundedMetadata(args.sourceEventId, 500),
     sourceSubject: boundedMetadata(args.sourceSubject, 1_000),
     status: blocked === null ? "queued" : "failed",
-    ...(blocked === null ? {} : { errorMessage: blocked, finishedAt: now }),
+    ...(blocked === null
+      ? {}
+      : { errorMessage: blocked, aiErrorCode: blocked, finishedAt: now }),
     attemptCount: 0,
     createdAt: now,
     updatedAt: now,
@@ -315,9 +319,16 @@ export const ingestRecipeSource = recipeIngestionWorkflow.define({
       threadId: processing.threadId,
       userId: processing.userId,
     });
-    // Handler errors end the workflow without retries; onIngestionComplete
-    // stores the code.
-    if (generated.kind === "aiFailure") throw new Error(generated.code);
+    if (generated.kind === "aiFailure") {
+      // The code is recorded by its own step, so it never has to be read back
+      // out of an error message that page or URL text could have shaped.
+      // Handler errors end the workflow without retries.
+      await step.runMutation(internal.recipeIngestion.recordAiFailure, {
+        importId,
+        code: generated.code,
+      });
+      throw new Error(AI_FAILURE_RECORDED);
+    }
     const persisted = await step.runMutation(
       internal.recipeAgentData.persistGeneratedRecipe,
       {
@@ -381,6 +392,7 @@ export const markScraping = internalMutation({
       status: "scraping",
       attemptCount: recipeImport.attemptCount + 1,
       errorMessage: undefined,
+      aiErrorCode: undefined,
       startedAt: recipeImport.startedAt ?? now,
       updatedAt: now,
     });
@@ -443,6 +455,7 @@ export const persistScrape = internalMutation({
       scrapeArtifactId: artifactId,
       status: "scraped",
       errorMessage: undefined,
+      aiErrorCode: undefined,
       finishedAt: now,
       updatedAt: now,
     });
@@ -509,6 +522,31 @@ export const agentReadyArtifact = internalQuery({
   },
 });
 
+const AI_FAILURE_RECORDED = "AI failure recorded";
+
+/**
+ * Ends an import with a failure caused by the user's AI settings or provider
+ * account. It does not use up an attempt: the user can fix the key and retry.
+ */
+export const recordAiFailure = internalMutation({
+  args: { importId: v.id("recipeImports"), code: aiErrorCodeValidator },
+  returns: v.null(),
+  handler: async (ctx, { importId, code }) => {
+    const recipeImport = await ctx.db.get(importId);
+    if (recipeImport === null) return null;
+    const now = Date.now();
+    await ctx.db.patch(importId, {
+      status: "failed",
+      errorMessage: code,
+      aiErrorCode: code,
+      attemptCount: Math.max(0, recipeImport.attemptCount - 1),
+      finishedAt: now,
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
 export const onIngestionComplete = internalMutation({
   args: {
     workflowId: v.string(),
@@ -530,17 +568,15 @@ export const onIngestionComplete = internalMutation({
 
     const rawMessage =
       result.kind === "failed" ? result.error : "Recipe ingestion was canceled";
-    // A failure caused by the user's AI settings is stored as its bare code,
-    // and does not use up an attempt: the user can fix the key and retry.
-    const aiCode = aiErrorCodeIn(rawMessage);
-    const errorMessage = aiCode ?? rawMessage.slice(0, 500);
+    // recordAiFailure already stored this run's outcome.
+    if (recipeImport.status === "failed" && recipeImport.aiErrorCode !== undefined) {
+      return null;
+    }
+    const errorMessage = rawMessage.slice(0, 500);
     const now = Date.now();
     await ctx.db.patch(context.importId, {
       status: "failed",
       errorMessage,
-      ...(aiCode === undefined
-        ? {}
-        : { attemptCount: Math.max(0, recipeImport.attemptCount - 1) }),
       finishedAt: now,
       updatedAt: now,
     });

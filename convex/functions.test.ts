@@ -1176,55 +1176,67 @@ describe("recipe scrape persistence", () => {
     });
   });
 
-  it("stores an AI failure as its code and gives the attempt back", async () => {
+  it("records an AI failure through its own step and gives the attempt back", async () => {
     const t = initTest();
-    const [aiImportId, otherImportId] = await t.run(async (ctx) => {
+    const importId = await t.run(async (ctx) => {
       const now = Date.now();
-      const fields = {
-        sourceKind: "direct" as const,
-        status: "processing" as const,
+      return await ctx.db.insert("recipeImports", {
+        sourceUrl: "https://example.com/ai",
+        normalizedUrl: "https://example.com/ai",
+        sourceKind: "direct",
+        status: "processing",
         attemptCount: 1,
+        workflowId: "workflow-ai",
         createdAt: now,
         updatedAt: now,
-      };
-      return await Promise.all([
-        ctx.db.insert("recipeImports", {
-          ...fields,
-          sourceUrl: "https://example.com/ai",
-          normalizedUrl: "https://example.com/ai",
-          workflowId: "workflow-ai",
-        }),
-        ctx.db.insert("recipeImports", {
-          ...fields,
-          sourceUrl: "https://example.com/other",
-          normalizedUrl: "https://example.com/other",
-          workflowId: "workflow-other",
-        }),
-      ]);
+      });
+    });
+
+    await t.mutation(internal.recipeIngestion.recordAiFailure, {
+      importId,
+      code: "ai_key_invalid",
+    });
+    await t.mutation(internal.recipeIngestion.onIngestionComplete, {
+      workflowId: "workflow-ai",
+      context: { importId },
+      result: { kind: "failed", error: "Uncaught Error: AI failure recorded\n    at handler" },
+    });
+    expect(await t.run(async (ctx) => ctx.db.get(importId))).toMatchObject({
+      status: "failed",
+      errorMessage: "ai_key_invalid",
+      aiErrorCode: "ai_key_invalid",
+      attemptCount: 0,
+    });
+  });
+
+  it("never reads an AI failure out of an error message", async () => {
+    const t = initTest();
+    const importId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("recipeImports", {
+        sourceUrl: "https://ai_key_invalid.example.com/x",
+        normalizedUrl: "https://ai_key_invalid.example.com/x",
+        sourceKind: "direct",
+        status: "scraping",
+        attemptCount: 1,
+        workflowId: "workflow-dns",
+        createdAt: now,
+        updatedAt: now,
+      });
     });
 
     await t.mutation(internal.recipeIngestion.onIngestionComplete, {
-      workflowId: "workflow-ai",
-      context: { importId: aiImportId },
-      result: { kind: "failed", error: "Uncaught Error: ai_key_invalid\n    at handler (x.js:1)" },
+      workflowId: "workflow-dns",
+      context: { importId },
+      result: {
+        kind: "failed",
+        error: "Uncaught Error: recipe_scrape_failed: Could not resolve ai_key_invalid.example.com",
+      },
     });
-    await t.mutation(internal.recipeIngestion.onIngestionComplete, {
-      workflowId: "workflow-other",
-      context: { importId: otherImportId },
-      result: { kind: "failed", error: "Scrape failed" },
-    });
-    await t.run(async (ctx) => {
-      expect(await ctx.db.get(aiImportId)).toMatchObject({
-        status: "failed",
-        errorMessage: "ai_key_invalid",
-        attemptCount: 0,
-      });
-      expect(await ctx.db.get(otherImportId)).toMatchObject({
-        status: "failed",
-        errorMessage: "Scrape failed",
-        attemptCount: 1,
-      });
-    });
+    const recipeImport = await t.run(async (ctx) => ctx.db.get(importId));
+    expect(recipeImport).toMatchObject({ status: "failed", attemptCount: 1 });
+    expect(recipeImport?.aiErrorCode).toBeUndefined();
+    expect(recipeImport?.errorMessage).toContain("Could not resolve ai_key_invalid.example.com");
   });
 });
 

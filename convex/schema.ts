@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { aiProviderValidator } from "./lib/aiValidators";
+import { aiErrorCodeValidator, aiProviderValidator } from "./lib/aiValidators";
 
 const importStatus = v.union(
   v.literal("queued"),
@@ -133,6 +133,9 @@ export default defineSchema({
     recipeId: v.optional(v.id("recipes")),
     generatedGroceryListId: v.optional(v.id("groceryLists")),
     errorMessage: v.optional(v.string()),
+    // Set only by server code that knows the failure came from the user's AI
+    // settings or provider account, never inferred from an error message.
+    aiErrorCode: v.optional(aiErrorCodeValidator),
     sourceMessageId: v.optional(v.string()),
     sourceEventId: v.optional(v.string()),
     sourceSubject: v.optional(v.string()),

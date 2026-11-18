@@ -35,6 +35,7 @@ describe("RecipeLinkImport", () => {
     mocks.result.status = "completed";
     mocks.result.recipeId = "recipe-123";
     delete (mocks.result as typeof mocks.result & { errorMessage?: string }).errorMessage;
+    delete (mocks.result as typeof mocks.result & { aiErrorCode?: string }).aiErrorCode;
   });
 
   it("shows a pasted recipe result and opens its unsaved preview", async () => {
@@ -123,7 +124,7 @@ describe("RecipeLinkImport", () => {
   it("explains a retry refused for lack of a key", async () => {
     mocks.result.status = "failed";
     mocks.result.recipeId = "";
-    (mocks.result as typeof mocks.result & { errorMessage?: string }).errorMessage = "ai_key_missing";
+    Object.assign(mocks.result, { errorMessage: "ai_key_missing", aiErrorCode: "ai_key_missing" });
     mocks.queueUrl
       .mockResolvedValueOnce("import-123")
       .mockRejectedValueOnce(new ConvexError({ code: "ai_key_missing" }));

@@ -25,12 +25,3 @@ export type AiErrorCode = (typeof AI_ERROR_CODES)[number];
 export function isAiErrorCode(value: unknown): value is AiErrorCode {
   return typeof value === "string" && (AI_ERROR_CODES as readonly string[]).includes(value);
 }
-
-/** The first known code that appears as a whole word in `message`. */
-export function aiErrorCodeIn(message: string | undefined): AiErrorCode | undefined {
-  if (message === undefined) return undefined;
-  for (const match of message.matchAll(/\bai_[a-z_]+\b/g)) {
-    if (isAiErrorCode(match[0])) return match[0];
-  }
-  return undefined;
-}

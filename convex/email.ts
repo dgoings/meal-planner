@@ -12,7 +12,7 @@ import {
   optionalStringField,
   primaryRecipeLinkFromMessage,
 } from "./lib/urls";
-import { aiErrorCodeIn } from "./lib/aiErrorCodes";
+import { aiErrorCodeValidator } from "./lib/aiValidators";
 import { queueRecipeSource } from "./recipeIngestion";
 
 const inboundEmailStatus = v.union(
@@ -108,7 +108,7 @@ export const recentInboundEmails = query({
           | "already_imported"
           | "needs_ai_key";
 
-        const aiCode = aiErrorCodeIn(ownedPrimaryImport?.errorMessage);
+        const aiCode = ownedPrimaryImport?.aiErrorCode;
         if (email.linkCount === 0) status = "no_links";
         else if (
           ownedPrimaryImport?.status === "failed" &&
@@ -170,6 +170,7 @@ export const importResult = query({
       description: v.optional(v.string()),
       sourceUrl: v.string(),
       errorMessage: v.optional(v.string()),
+      aiErrorCode: v.optional(aiErrorCodeValidator),
     }),
   ),
   handler: async (ctx, { importId }) => {
@@ -188,6 +189,7 @@ export const importResult = query({
       description: recipe?.description,
       sourceUrl: recipeImport.sourceUrl,
       errorMessage: recipeImport.errorMessage,
+      aiErrorCode: recipeImport.aiErrorCode,
     };
   },
 });

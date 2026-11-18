@@ -1,5 +1,5 @@
 import { ConvexError } from "convex/values";
-import { aiErrorCodeIn, type AiErrorCode } from "@/convex/lib/aiErrorCodes";
+import type { AiErrorCode } from "@/convex/lib/aiErrorCodes";
 
 /** What each AI failure means for the user, wherever it is shown. */
 export const AI_ERROR_COPY: Record<AiErrorCode, string> = {
@@ -18,9 +18,16 @@ export const AI_ERROR_COPY: Record<AiErrorCode, string> = {
   ai_provider_error: "Your AI provider couldn’t complete the request. Check your provider account, then try again.",
 };
 
-export function recipeImportFailureMessage(errorMessage: string | undefined) {
-  const aiCode = aiErrorCodeIn(errorMessage);
-  if (aiCode !== undefined) return AI_ERROR_COPY[aiCode];
+/**
+ * The user-facing reason an import failed. AI failures are identified only by
+ * the import's `aiErrorCode`, never by text in the error message, which page
+ * or URL content can influence.
+ */
+export function recipeImportFailureMessage(
+  errorMessage: string | undefined,
+  aiErrorCode?: AiErrorCode,
+) {
+  if (aiErrorCode !== undefined) return AI_ERROR_COPY[aiErrorCode];
   if (errorMessage?.includes("did not find a complete recipe")) {
     return "We couldn’t read a complete recipe from that page.";
   }

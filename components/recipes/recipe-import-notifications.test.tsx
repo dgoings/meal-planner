@@ -74,7 +74,12 @@ describe("RecipeImportNotifications", () => {
   it("explains a retry refused for lack of an AI key", async () => {
     mocks.addToBook.mockRejectedValue(new ConvexError({ code: "ai_key_missing" }));
     const { rerender } = render(<RecipeImportNotifications />);
-    mocks.imports = [{ _id: "import-1", status: "failed", errorMessage: "ai_key_missing" }];
+    mocks.imports = [{
+      _id: "import-1",
+      status: "failed",
+      errorMessage: "ai_key_missing",
+      aiErrorCode: "ai_key_missing",
+    }];
     rerender(<RecipeImportNotifications />);
 
     expect(
