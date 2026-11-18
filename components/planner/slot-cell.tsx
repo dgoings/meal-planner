@@ -77,16 +77,30 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
     if (next) requestFocus(slotControlId(next.date, next.meal));
   }
 
+  // After a type change, focus moves to the slot's main control (§2.3). That
+  // control often exists only once the change lands, so wait until the slot
+  // shows the expected state, then focus whatever control it now has.
+  const section = useRef<HTMLElement>(null);
+  const focusWhen = useRef<((current: SlotView | undefined) => boolean) | null>(null);
+  useEffect(() => {
+    const landed = focusWhen.current;
+    if (landed === null || !landed(slot)) return;
+    focusWhen.current = null;
+    const active = document.activeElement;
+    // Leave focus alone if the user has moved on to another part of the page.
+    if (active !== null && active !== document.body && !section.current?.contains(active)) return;
+    const showsOther = slot?.type === "left" && resolveLeftover(slots, slot)?.kind !== "source";
+    document.getElementById(showsOther ? otherInputId(date, meal) : controlId)?.focus();
+  });
+
   function pressType(pressed: SlotType) {
     // Ignored rather than disabled while saving, so focus can still land on the buttons.
     if (pending > 0) return;
-    void run(() => setType({ plannerId, date, meal, type: pressed }));
-    // Focus the control the slot will have once the change lands (§2.3).
-    if (pressed === "left" && type !== "left" && leftoverChoices(slots, ref).length === 0) {
-      requestFocus(otherInputId(date, meal));
-    } else {
-      requestFocus(controlId);
-    }
+    const clearing = type === pressed;
+    focusWhen.current = (current) => (clearing ? current === undefined : current?.type === pressed);
+    void run(() => setType({ plannerId, date, meal, type: pressed })).then((saved) => {
+      if (!saved) focusWhen.current = null;
+    });
   }
 
   function showImport(importId: Id<"recipeImports">) {
@@ -107,7 +121,7 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
   }
 
   return (
-    <section className={cn("planner-slot", type && `planner-slot-${type}`)} aria-label={label} aria-busy={pending > 0}>
+    <section ref={section} className={cn("planner-slot", type && `planner-slot-${type}`)} aria-label={label} aria-busy={pending > 0}>
       <p className="planner-slot-label" aria-hidden="true">{meal === "lunch" ? "Lunch" : "Dinner"}</p>
       <div className="planner-types" role="group" aria-label={`${label} type`}>
         {SLOT_TYPES.map((option) => (
@@ -134,8 +148,10 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
           label={label}
           controlId={controlId}
           onChoose={(from) => {
-            void run(() => setLeftoverOf({ plannerId, date, meal, from }));
-            if (from === "other") requestFocus(otherInputId(date, meal));
+            if (from === "other") focusWhen.current = (current) => current?.type === "left" && current.from === "other";
+            void run(() => setLeftoverOf({ plannerId, date, meal, from })).then((saved) => {
+              if (!saved) focusWhen.current = null;
+            });
           }}
           onCommitOther={(text) => run(() => commitOther({ plannerId, date, meal, text }))}
           onEnter={focusNext}
