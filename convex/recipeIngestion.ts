@@ -1,4 +1,3 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { WorkflowManager } from "@convex-dev/workflow";
 import { v } from "convex/values";
 import { components, internal } from "./_generated/api";
@@ -12,6 +11,7 @@ import {
 } from "./_generated/server";
 import type { RecipeScrapePayload } from "./lib/recipeScrape";
 import { normalizeRecipeUrl } from "./lib/urls";
+import { requireUser } from "./lib/auth";
 
 export const recipeIngestionWorkflow = new WorkflowManager(
   components.workflow,
@@ -184,8 +184,7 @@ export const retryImport = mutation({
   args: { importId: v.id("recipeImports") },
   returns: v.null(),
   handler: async (ctx, { importId }) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) throw new Error("Unauthenticated");
+    const userId = await requireUser(ctx);
     const recipeImport = await ctx.db.get(importId);
     if (recipeImport === null || recipeImport.requestedBy !== userId) {
       throw new Error("Recipe import was not found");
@@ -226,8 +225,7 @@ export const queueDiscoveredUrl = mutation({
   },
   returns: v.id("recipeImports"),
   handler: async (ctx, { sourceUrl, sourceQuery, setAsCurrent }) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) throw new Error("Unauthenticated");
+    const userId = await requireUser(ctx);
     const normalizedQuery = sourceQuery.trim();
     if (normalizedQuery.length === 0 || normalizedQuery.length > 500) {
       throw new Error("Source query must be between 1 and 500 characters");

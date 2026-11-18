@@ -1,7 +1,8 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { query, type QueryCtx } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Doc } from "./_generated/dataModel";
+import { requireUser } from "./lib/auth";
+import { canAccessRecipe } from "./lib/recipeAccess";
 
 const recipeValidator = v.object({
   _id: v.id("recipes"),
@@ -89,14 +90,6 @@ const importReviewValidator = v.object({
   warnings: v.array(v.string()),
   generatedGroceryListId: v.optional(v.id("groceryLists")),
 });
-
-async function requireUser(ctx: QueryCtx) {
-  const userId = await getAuthUserId(ctx);
-  if (userId === null) {
-    throw new Error("Unauthenticated");
-  }
-  return userId;
-}
 
 async function recipeView(ctx: QueryCtx, recipe: Doc<"recipes">) {
   const { imageStorageId, ...visibleRecipe } = recipe;
@@ -202,26 +195,6 @@ export const currentId = query({
     return user?.currentRecipeId ?? null;
   },
 });
-
-async function canAccessRecipe(
-  ctx: QueryCtx,
-  userId: Id<"users">,
-  recipe: Doc<"recipes">,
-) {
-  if (recipe.isPublic === true) return true;
-
-  const saved = await ctx.db
-    .query("savedRecipes")
-    .withIndex("by_user_and_recipe", (q) =>
-      q.eq("userId", userId).eq("recipeId", recipe._id),
-    )
-    .first();
-  if (saved !== null) return true;
-
-  if (recipe.importId === undefined) return false;
-  const recipeImport = await ctx.db.get(recipe.importId);
-  return recipeImport?.requestedBy === userId;
-}
 
 export const get = query({
   args: { recipeId: v.string() },

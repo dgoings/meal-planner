@@ -1,4 +1,3 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -7,6 +6,8 @@ import {
 } from "./_generated/server";
 import { normalizeRecipeUrl } from "./lib/urls";
 import { parseManualIngredient } from "./lib/manualIngredient";
+import { requireUser } from "./lib/auth";
+import { normalizeIngredientName } from "./lib/ingredientName";
 
 const instructionValidator = v.object({
   position: v.number(),
@@ -27,12 +28,6 @@ const ALLOWED_IMAGE_TYPES = new Set([
 
 const nullableString = v.union(v.string(), v.null());
 const nullableNumber = v.union(v.number(), v.null());
-
-async function requireUser(ctx: MutationCtx) {
-  const userId = await getAuthUserId(ctx);
-  if (userId === null) throw new Error("Unauthenticated");
-  return userId;
-}
 
 async function requireOwnedRecipe(
   ctx: MutationCtx,
@@ -80,10 +75,6 @@ function optionalString(value: string | null) {
   if (value === null) return undefined;
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
-}
-
-function normalizeIngredientName(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 export const createManual = mutation({

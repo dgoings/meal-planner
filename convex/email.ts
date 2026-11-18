@@ -13,6 +13,7 @@ import {
   primaryRecipeLinkFromMessage,
 } from "./lib/urls";
 import { queueRecipeSource } from "./recipeIngestion";
+import { requireUser } from "./lib/auth";
 
 const inboundEmailStatus = v.union(
   v.literal("received"),
@@ -162,8 +163,7 @@ export const importResult = query({
     }),
   ),
   handler: async (ctx, { importId }) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) throw new Error("Unauthenticated");
+    const userId = await requireUser(ctx);
     const recipeImport = await ctx.db.get(importId);
     if (recipeImport === null || recipeImport.requestedBy !== userId) return null;
     const recipe =
@@ -187,8 +187,7 @@ export const queueUrl = mutation({
   },
   returns: v.id("recipeImports"),
   handler: async (ctx, { sourceUrl }) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) throw new Error("Unauthenticated");
+    const userId = await requireUser(ctx);
     const queued = await queueRecipeSource(ctx, {
       userId,
       sourceUrl,
