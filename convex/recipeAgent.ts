@@ -17,13 +17,13 @@ import {
   recipeExtractionValidator,
   type RecipeExtraction,
 } from "./lib/recipeAgentTypes";
+import { extractionFromJsonLd, JSON_LD_RECIPE_MODEL } from "./lib/recipeJsonLd";
+import { promptJsonLd, promptMarkdown } from "./lib/recipePromptSource";
 import { userModelConfig, type StoredAiSettings } from "./lib/userModelConfig";
-
-const MAX_AGENT_MARKDOWN_CHARACTERS = 120_000;
-const MAX_AGENT_JSON_LD_CHARACTERS = 80_000;
 
 type ProcessingInput = {
   sourceUrl: string;
+  normalizedUrl: string;
   sourceKind?: "direct" | "email" | "agent_discovery";
   sourceQuery?: string;
   markdown: string;
@@ -156,6 +156,20 @@ export const extractRecipe = internalAction({
     );
     if (input === null) throw new Error("Recipe source is not ready for processing");
 
+    // A page with complete structured data, or one already extracted for
+    // anyone, needs no model call and spends none of the user's tokens.
+    const structured = input.recipeJsonLd
+      ? extractionFromJsonLd(input.recipeJsonLd)
+      : null;
+    if (structured !== null) {
+      return { kind: "extracted", model: JSON_LD_RECIPE_MODEL, extraction: structured };
+    }
+
+    const cached = await ctx.runQuery(internal.recipeAgentData.cachedExtraction, {
+      normalizedUrl: input.normalizedUrl,
+    });
+    if (cached !== null) return { kind: "extracted", ...cached };
+
     const settings: StoredAiSettings | null = await ctx.runQuery(
       internal.aiSettings.encryptedForUser,
       { userId },
@@ -179,7 +193,8 @@ export const extractRecipe = internalAction({
     });
     let result;
     try {
-      result = await thread.generateObject({
+      result = await thread.generateObject(
+        {
         schema: recipeExtractionSchema,
         schemaName: "PerfectPlateRecipeExtraction",
         schemaDescription:
@@ -196,13 +211,17 @@ PAGE_DESCRIPTION: ${input.pageDescription ?? "unknown"}
 SCRAPE_TRUNCATED: ${input.truncated ? "yes" : "no"}
 
 <SOURCE_JSON_LD>
-${input.recipeJsonLd?.slice(0, MAX_AGENT_JSON_LD_CHARACTERS) ?? "not available"}
+${promptJsonLd(input.recipeJsonLd) ?? "not available"}
 </SOURCE_JSON_LD>
 
 <SOURCE_MARKDOWN>
-${input.markdown.slice(0, MAX_AGENT_MARKDOWN_CHARACTERS)}
+${promptMarkdown(input.markdown, input.recipeJsonLd !== undefined)}
 </SOURCE_MARKDOWN>`,
-      });
+        },
+        // Each attempt is a one-shot extraction. Earlier attempts' prompts are
+        // saved on this thread, and replaying them would multiply input tokens.
+        { contextOptions: { recentMessages: 0 } },
+      );
     } catch (error) {
       const decision = extractionFailureDecision(error);
       if (decision.kind === "aiFailure") return decision;
@@ -213,6 +232,13 @@ ${input.markdown.slice(0, MAX_AGENT_MARKDOWN_CHARACTERS)}
       throw error;
     }
     const extraction: RecipeExtraction = result.object;
+    if (extraction.ingredients.length > 0 && extraction.instructions.length > 0) {
+      await ctx.runMutation(internal.recipeAgentData.cacheExtraction, {
+        normalizedUrl: input.normalizedUrl,
+        model,
+        extraction,
+      });
+    }
     return { kind: "extracted", model, extraction };
   },
 });

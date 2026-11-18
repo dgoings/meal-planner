@@ -19,7 +19,7 @@ export type RecipeScrapePayload = {
   truncated: boolean;
 };
 
-function findRecipeNode(value: unknown) {
+export function findRecipeNode(value: unknown) {
   const pending: unknown[] = [value];
   const seen = new WeakSet<object>();
   let visited = 0;

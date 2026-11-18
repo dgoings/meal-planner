@@ -194,11 +194,26 @@ ingredients. Agent threads and messages are still persisted by the Convex Agent
 component, while normalized recipe and grocery data lives in the application's
 Convex tables.
 
+When the page publishes a complete schema.org `Recipe` in JSON-LD (a title,
+ingredients, and instructions), the preview is built from that data directly
+and no model is called (`convex/lib/recipeJsonLd.ts`). Ingredient lines are
+parsed and given a grocery aisle by keyword; these imports record
+`schema.org-json-ld` as their model. Pages without complete structured data
+go to the model as described below.
+
+Model output is cached by page URL for 30 days in `recipeExtractions` and shared
+across users, so a page someone has already imported is not sent to the model
+again. Before a page is sent, reader comments and reviews after the recipe are
+dropped and the page text is capped, more tightly when JSON-LD is also sent.
+The extraction step is retried once on failure, and each attempt is sent
+without the earlier attempts' messages from the agent thread.
+
 Every AI feature runs on a key the user supplies. Under **Settings → AI
 provider**, each user picks Anthropic, OpenAI, or OpenRouter, enters a model,
 and pastes an API key; calls are billed to their own provider account. There is
 no deployment-level model key: a user without a saved key cannot import
-recipes until they add one.
+recipes until they add one, even though pages with complete structured data
+or a cached result then import without calling the model.
 
 - Anthropic's model is optional and defaults to `claude-sonnet-5`.
 - OpenAI and OpenRouter need a model that supports structured output. For
