@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, BookCheck, BookPlus, Check, Clock3, ExternalLink, Heart, Link2, Pencil, Save, Users } from "lucide-react";
+import { ArrowLeft, BookCheck, BookPlus, Check, Clock3, ExternalLink, Heart, Link2, Pencil, Plus, Save, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
@@ -18,6 +18,7 @@ import { FoodArt } from "./food-art";
 import { ImportIntoRecipeDialog } from "./import-into-recipe-dialog";
 import { RecipeEditor } from "./recipe-editor";
 import { RecipeIngredients } from "./recipe-ingredients";
+import { RecipeNutrition } from "./recipe-nutrition";
 import { CurrentRecipeButton } from "./current-recipe-button";
 import { RemoveRecipeButton } from "./remove-recipe-button";
 
@@ -31,6 +32,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
   const [servings, setServings] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [editingNutrition, setEditingNutrition] = useState(false);
   const [returnFocusToEdit, setReturnFocusToEdit] = useState(false);
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState("");
@@ -138,6 +140,7 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
                 {saved !== null && <Button variant="ghost" size="sm" aria-pressed={saved.isFavorite} onClick={() => void toggleFavorite()}><Heart size={16} fill={saved.isFavorite ? "currentColor" : "none"} />{saved.isFavorite ? "Favorited" : "Favorite"}</Button>}
                 {canEdit && <Button variant="ghost" size="sm" autoFocus={returnFocusToEdit} onClick={() => { setMessage(""); setEditing(true); }}><Pencil size={16} />Edit recipe</Button>}
                 {canEdit && !isEmpty && <Button variant="ghost" size="sm" onClick={() => setImporting(true)}><Link2 size={16} />Import from link</Button>}
+                {canEdit && recipe.nutritionPerServing === undefined && !editingNutrition && <Button variant="ghost" size="sm" onClick={() => { setMessage(""); setEditingNutrition(true); }}><Plus size={16} />Add nutrition</Button>}
                 {recipe.sourceUrl && <Button asChild variant="ghost" size="sm"><a href={recipe.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} />View original</a></Button>}
               </div>
               {(canEdit || saved !== null) && (
@@ -149,7 +152,17 @@ export function RecipeDetail({ recipeId }: { recipeId: string }) {
           </div>
 
           <div className="mt-8 grid gap-8 lg:grid-cols-[.85fr_1.15fr]">
-            <RecipeIngredients ingredients={ingredients} initialServings={recipe.servings} servings={servings ?? undefined} onServingsChange={setServings} />
+            <div className="grid content-start gap-8">
+              <RecipeIngredients ingredients={ingredients} initialServings={recipe.servings} servings={servings ?? undefined} onServingsChange={setServings} />
+              <RecipeNutrition
+                recipeId={recipeDocId}
+                nutrition={recipe.nutritionPerServing}
+                canEdit={canEdit}
+                editing={editingNutrition}
+                onEditingChange={setEditingNutrition}
+                onMessage={(text) => { setError(""); setMessage(text); }}
+              />
+            </div>
             <section><h2 className="section-heading">Instructions</h2><p className="section-copy mb-4">A clean, distraction-free cooking view.</p><ol className="stack">{recipe.instructions.map((instruction) => <li className="flex gap-4 rounded-xl border border-border bg-white p-5" key={instruction.position}><span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary text-sm font-extrabold text-white">{instruction.position}</span><p className="pt-1 text-sm leading-6">{instruction.text}</p></li>)}</ol></section>
           </div>
         </>

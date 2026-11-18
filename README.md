@@ -106,8 +106,9 @@ The frontend currently includes the following responsive, navigable flows:
   the 500 most recently saved recipes and says so when that limit is reached.
 - **Recipe details:** ingredients, cooking instructions, serving controls that
   show kitchen fractions and carry the chosen serving count into a grocery
-  list, source attribution, favorites, save/current/grocery/source actions,
-  and duplicate-grocery-list confirmation. Personal notes and favorites are
+  list, per-serving nutrition (read from the recipe page on import or entered
+  by the owner), source attribution, favorites, save/current/grocery/source
+  actions, and duplicate-grocery-list confirmation. Personal notes and favorites are
   available once a recipe is in the Recipe Book. Editing and removal are
   offered only to the account that imported or created the recipe; anyone else
   can remove it from their own book.

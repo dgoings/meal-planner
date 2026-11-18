@@ -122,6 +122,17 @@ describe("RecipeDetail", () => {
     vi.unstubAllGlobals();
   });
 
+  it("offers the owner a quiet action to add nutrition when the recipe has none", async () => {
+    const user = userEvent.setup();
+    render(<RecipeDetail recipeId="recipe-1" />);
+    expect(screen.queryByRole("region", { name: "Nutrition per serving" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add nutrition" }));
+    await user.type(screen.getByLabelText("Calories (kcal)"), "320");
+    await user.click(screen.getByRole("button", { name: "Save nutrition" }));
+    expect(mocks.mutation).toHaveBeenCalledWith({ recipeId: "recipe-1", figures: { calories: 320 } });
+    expect(await screen.findByText("Nutrition saved.")).toBeInTheDocument();
+  });
+
   it("offers to fill the owner's recipe from a link, and a removal button of full touch size", async () => {
     const user = userEvent.setup();
     render(<RecipeDetail recipeId="recipe-1" />);

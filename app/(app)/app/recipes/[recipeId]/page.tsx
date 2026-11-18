@@ -4,10 +4,12 @@ import { ArrowLeft, Clock3, Users } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FoodArt } from "@/components/recipes/food-art";
+import { NutritionFacts } from "@/components/recipes/nutrition-facts";
 import { RecipePreviewActions } from "@/components/recipes/recipe-preview-actions";
 import { RecipeIngredients } from "@/components/recipes/recipe-ingredients";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/convex/_generated/api";
 import { convexAuthNextjsAccessToken } from "@/lib/convex-auth";
 import { recipeArt } from "@/lib/data/recipe-view";
@@ -74,7 +76,18 @@ export default async function RecipePreviewPage({
       </div>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[.85fr_1.15fr]">
-        <RecipeIngredients ingredients={ingredients} initialServings={servings || 1} />
+        <div className="grid content-start gap-8">
+          <RecipeIngredients ingredients={ingredients} initialServings={servings || 1} />
+          {recipe.nutritionPerServing !== undefined && (
+            <Card>
+              <CardContent>
+                <section aria-labelledby="recipe-nutrition-heading">
+                  <NutritionFacts nutrition={recipe.nutritionPerServing} headingId="recipe-nutrition-heading" />
+                </section>
+              </CardContent>
+            </Card>
+          )}
+        </div>
         <section>
           <h2 className="section-heading">Instructions</h2>
           <p className="section-copy mb-4">Review the recipe before deciding where to keep it.</p>
