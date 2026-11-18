@@ -360,6 +360,20 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .planner-slot .input, .planner-slot select { font-size: .95rem; }
 }
 
+/* A grocery list's unsaved changes: a bold danger notice, and on phones a bar pinned just above the bottom navigation. */
+.grocery-unsaved { display: flex; align-items: center; gap: .4rem; color: var(--danger); font-size: .9rem; font-weight: 800; }
+.grocery-unsaved svg { flex: none; }
+.grocery-unsaved-bar { display: none; }
+@media (max-width: 767px) {
+  /* The fallback offset approximates the bottom navigation until it is measured. */
+  .grocery-unsaved-bar { position: fixed; right: 0; bottom: var(--grocery-bar-bottom, calc(3.9rem + env(safe-area-inset-bottom))); left: 0; z-index: 44; display: flex; align-items: center; justify-content: space-between; gap: .75rem; border-top: 2px solid var(--danger); background: #fdf2f2; padding: .5rem max(1rem, env(safe-area-inset-right)) .5rem max(1rem, env(safe-area-inset-left)); box-shadow: 0 -6px 18px rgb(28 35 27 / .1); }
+  .grocery-unsaved-bar .grocery-unsaved { min-width: 0; margin: 0; }
+  .grocery-unsaved-bar .button { flex: none; min-height: 44px; }
+  /* Room for the bar under the last items, and focus scrolling that clears it. */
+  .has-unsaved-bar { padding-bottom: 4.5rem; }
+  html:has(.has-unsaved-bar) { scroll-padding-bottom: 168px; }
+}
+
 /* Phone: the grocery list page keeps its header to one line so the first items show without scrolling. */
 @media (max-width: 767px) {
   .grocery-list-page { position: relative; padding-top: .5rem; }
