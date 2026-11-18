@@ -154,6 +154,35 @@ describe("PlannerWeek", () => {
     expect(scrollIntoView.mock.contexts[0]).toBe(days[2]);
   });
 
+  it("keeps today's scroll offset at the toolbar's real height, even when it wraps", () => {
+    let height = 56;
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      return { height: this.classList.contains("planner-toolbar") ? height : 0 } as DOMRect;
+    });
+    const observers: (() => void)[] = [];
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) { observers.push(callback); }
+      observe() {}
+      disconnect() {}
+    });
+    const offsetAtScroll: string[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      offsetAtScroll.push((this.closest(".planner") as HTMLElement).style.getPropertyValue("--planner-toolbar-height"));
+    };
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true }) as unknown as typeof window.matchMedia;
+    try {
+      const { container } = render(<PlannerWeek />);
+      const planner = container.querySelector<HTMLElement>(".planner")!;
+      expect(offsetAtScroll).toEqual(["56px"]);
+      height = 104;
+      act(() => observers.forEach((callback) => callback()));
+      expect(planner.style.getPropertyValue("--planner-toolbar-height")).toBe("104px");
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("does not scroll on another week", () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;

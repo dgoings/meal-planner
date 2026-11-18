@@ -43,6 +43,23 @@ function useToday() {
   return today;
 }
 
+/**
+ * Keeps `--planner-toolbar-height` on the planner at the sticky toolbar's
+ * real height, which grows when it wraps to two rows on a narrow phone, so a
+ * day card scrolled into view lands below it (scroll-margin-top). Attached as
+ * a ref, so it is measured before the scroll to today.
+ */
+function measureToolbar(toolbar: HTMLDivElement | null) {
+  const planner = toolbar?.parentElement;
+  if (!toolbar || !planner) return;
+  const update = () => planner.style.setProperty("--planner-toolbar-height", `${toolbar.getBoundingClientRect().height}px`);
+  update();
+  if (typeof ResizeObserver !== "function") return;
+  const observer = new ResizeObserver(update);
+  observer.observe(toolbar);
+  return () => observer.disconnect();
+}
+
 export function PlannerWeek() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -121,7 +138,7 @@ export function PlannerWeek() {
 
   return (
     <div className="planner">
-      <div className="planner-toolbar">
+      <div ref={measureToolbar} className="planner-toolbar">
         <div className="planner-week-nav">
           <Button id={PREVIOUS_WEEK_ID} variant="secondary" size="icon" aria-label="Previous week" onClick={() => showWeek(addDays(start, -7))}>
             <ChevronLeft size={20} aria-hidden="true" />
