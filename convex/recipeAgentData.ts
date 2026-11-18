@@ -5,6 +5,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { nutritionFromFigures } from "./lib/nutrition";
 import { recipeExtractionValidator } from "./lib/recipeAgentTypes";
 
 // Recipe pages get edited, so an old extraction is re-run rather than reused.
@@ -192,6 +193,8 @@ export const persistGeneratedRecipe = internalMutation({
       throw new Error("The agent did not find a complete recipe");
     }
 
+    // Figures the page stated; any that are unusable are dropped, never failing the import.
+    const nutritionPerServing = nutritionFromFigures(extraction.nutrition, "page");
     const now = Date.now();
     const recipeId = await ctx.db.insert("recipes", {
       importId,
@@ -219,6 +222,7 @@ export const persistGeneratedRecipe = internalMutation({
           ? {}
           : { section: instruction.section.trim() }),
       })),
+      ...(nutritionPerServing === undefined ? {} : { nutritionPerServing }),
       createdAt: now,
       updatedAt: now,
     });

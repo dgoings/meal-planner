@@ -5,6 +5,15 @@ import {
   mutation,
   type MutationCtx,
 } from "./_generated/server";
+import {
+  hasNutritionFigures,
+  NUTRIENT_KEYS,
+  NUTRIENTS,
+  nutritionFiguresValidator,
+  readRecipeNutrition,
+  validNutrient,
+  type NutritionFigures,
+} from "./lib/nutrition";
 import { isRecipeLink } from "./lib/plannerRules";
 import { ingredientCatalogEntry, insertUserRecipe } from "./lib/userRecipes";
 import { queueRecipeSource, startRecipeIngestion, type StartIngestion } from "./recipeIngestion";
@@ -266,6 +275,39 @@ export const updateCard = mutation({
       });
     }
     await ctx.db.patch(args.recipeId, patch);
+    return null;
+  },
+});
+
+/**
+ * Replaces the owner's per-serving nutrition with the figures given, marking
+ * them as entered by hand. A figure left out is cleared; leaving out every
+ * figure removes the nutrition. The legacy text field is removed too, so it
+ * cannot show through once the owner has edited or cleared the figures.
+ */
+export const setNutrition = mutation({
+  args: { recipeId: v.id("recipes"), figures: nutritionFiguresValidator },
+  returns: v.null(),
+  handler: async (ctx, { recipeId, figures }) => {
+    const userId = await requireUser(ctx);
+    await requireOwnedRecipe(ctx, userId, recipeId);
+    const nutrition: NutritionFigures = {};
+    for (const key of NUTRIENT_KEYS) {
+      const value = figures[key];
+      if (value === undefined) continue;
+      const valid = validNutrient(value, key);
+      if (valid === undefined) {
+        throw new Error(`${NUTRIENTS[key].label} must be between 0 and ${NUTRIENTS[key].max}`);
+      }
+      nutrition[key] = valid;
+    }
+    await ctx.db.patch(recipeId, {
+      nutritionPerServing: hasNutritionFigures(nutrition)
+        ? { ...nutrition, source: "manual" }
+        : undefined,
+      nutrition: undefined,
+      updatedAt: Date.now(),
+    });
     return null;
   },
 });
@@ -583,7 +625,7 @@ const FILL_INGREDIENT_LIMIT = 200;
 /**
  * Copies a finished import's recipe into the owner's existing recipe, which
  * keeps its id (and so its planner slots, notes and favourite): ingredients,
- * instructions, times, servings, image and source; the title only with
+ * instructions, times, servings, nutrition, image and source; the title only with
  * `useImportedTitle`. A recipe that already has ingredients or instructions
  * is replaced only with `replaceExisting`. The import's draft is then
  * discarded unless the user saved it to their Recipe Book themselves.
@@ -666,7 +708,10 @@ export const fillFromImport = mutation({
     if (target.categories.length === 0) patch.categories = source.categories;
     if (target.cuisines.length === 0) patch.cuisines = source.cuisines;
     if (target.keywords.length === 0) patch.keywords = source.keywords;
-    if (source.nutrition !== undefined) patch.nutrition = source.nutrition;
+    // Like times and servings, the import's figures replace the recipe's own;
+    // an import without any keeps them.
+    const importedNutrition = readRecipeNutrition(source);
+    if (importedNutrition !== undefined) patch.nutritionPerServing = importedNutrition;
     await ctx.db.patch(target._id, patch);
 
     // The draft only existed to preview this import; one the user chose to

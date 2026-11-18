@@ -1,5 +1,6 @@
 import { groceryCategoryForIngredient } from "./groceryCategory";
 import { parseManualIngredient } from "./manualIngredient";
+import { nutritionFromSchemaOrg } from "./nutrition";
 import type { RecipeExtraction } from "./recipeAgentTypes";
 import { findRecipeNode } from "./recipeScrape";
 
@@ -187,6 +188,9 @@ export function extractionFromJsonLd(recipeJsonLd: string): RecipeExtraction | n
 
   if (ingredients.length === 0 || instructions.length === 0) return null;
 
+  // Unusable figures are dropped; nutrition never makes an extraction fail.
+  const nutrition = nutritionFromSchemaOrg(recipe.nutrition);
+
   return {
     title,
     description: cleanText(recipe.description, 2_000),
@@ -201,6 +205,7 @@ export function extractionFromJsonLd(recipeJsonLd: string): RecipeExtraction | n
     keywords: labels(recipe.keywords, 30),
     instructions,
     ingredients,
+    ...(nutrition === undefined ? {} : { nutrition }),
     warnings: [],
   };
 }

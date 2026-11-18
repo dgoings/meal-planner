@@ -100,6 +100,36 @@ describe("extractionFromJsonLd", () => {
     ]);
   });
 
+  it("reads the page's per-serving nutrition, dropping unusable figures", () => {
+    const base = {
+      "@type": "Recipe",
+      name: "Soup",
+      recipeIngredient: ["1 cup stock"],
+      recipeInstructions: ["Heat."],
+    };
+    const extraction = extractionFromJsonLd(
+      JSON.stringify({
+        ...base,
+        nutrition: {
+          "@type": "NutritionInformation",
+          calories: "270 calories",
+          proteinContent: "12 g",
+          carbohydrateContent: "lots",
+          fatContent: "-3 g",
+          sodiumContent: "1.2 g",
+        },
+      }),
+    );
+    expect(extraction?.nutrition).toEqual({ calories: 270, proteinG: 12, sodiumMg: 1200 });
+
+    const withoutFigures = extractionFromJsonLd(
+      JSON.stringify({ ...base, nutrition: { calories: "N/A" } }),
+    );
+    expect(withoutFigures).not.toBeNull();
+    expect(withoutFigures).not.toHaveProperty("nutrition");
+    expect(extractionFromJsonLd(JSON.stringify(base))).not.toHaveProperty("nutrition");
+  });
+
   it("returns null so the model runs when the recipe is incomplete", () => {
     const base = {
       "@type": "Recipe",

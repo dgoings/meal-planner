@@ -14,6 +14,7 @@ import { aiModelLabel, type AiModelConfig } from "./lib/aiModel";
 import { aiErrorCodeValidator } from "./lib/aiValidators";
 import { GROCERY_CATEGORIES } from "./lib/groceryCategory";
 import {
+  extractionFromModelOutput,
   recipeExtractionValidator,
   type RecipeExtraction,
 } from "./lib/recipeAgentTypes";
@@ -35,6 +36,9 @@ type ProcessingInput = {
 
 const nullableShortText = z.string().trim().max(2_000).nullable();
 const nullableMinutes = z.number().int().min(0).max(10_080).nullable();
+// Unbounded on purpose: out-of-range figures are dropped after extraction by
+// `extractionFromModelOutput`, so nutrition can never fail an import.
+const nullableFigure = (description: string) => z.number().nullable().describe(description);
 
 const recipeExtractionSchema = z.object({
   title: z.string().trim().min(1).max(300),
@@ -76,6 +80,20 @@ const recipeExtractionSchema = z.object({
       }),
     )
     .max(200),
+  nutrition: z
+    .object({
+      calories: nullableFigure("Calories per serving, in kcal"),
+      proteinG: nullableFigure("Protein per serving, in grams"),
+      carbsG: nullableFigure("Total carbohydrate per serving, in grams"),
+      fatG: nullableFigure("Total fat per serving, in grams"),
+      fiberG: nullableFigure("Dietary fiber per serving, in grams"),
+      saturatedFatG: nullableFigure("Saturated fat per serving, in grams"),
+      sodiumMg: nullableFigure("Sodium per serving, in milligrams"),
+    })
+    .nullable()
+    .describe(
+      "Per-serving nutrition figures copied from the source. Null when the source states none.",
+    ),
   warnings: z.array(z.string().trim().min(1).max(500)).max(20),
 });
 
@@ -119,7 +137,12 @@ Extraction rules:
 - Set each ingredient's category to the grocery store section where it is normally shelved.
 - Put uncertainty, missing core fields, contradictions, or apparent truncation in warnings.
 - Normalize positions to a clear cooking order.
-- Return an empty metadata array rather than guessing cuisines, categories, or keywords.`,
+- Return an empty metadata array rather than guessing cuisines, categories, or keywords.
+- Copy nutrition figures only when the source states them per serving. Never estimate,
+  calculate, or derive them from ingredients, and never scale whole-recipe totals. Leave any
+  figure the source does not state as null, and set nutrition to null when it states none.
+  Convert units only where needed (sodium in milligrams, the rest in grams, energy in kcal).
+  Missing nutrition is not a warning.`,
   });
 }
 
@@ -231,7 +254,7 @@ ${promptMarkdown(input.markdown, input.recipeJsonLd !== undefined)}
       });
       throw error;
     }
-    const extraction: RecipeExtraction = result.object;
+    const extraction: RecipeExtraction = extractionFromModelOutput(result.object);
     if (extraction.ingredients.length > 0 && extraction.instructions.length > 0) {
       await ctx.runMutation(internal.recipeAgentData.cacheExtraction, {
         normalizedUrl: input.normalizedUrl,

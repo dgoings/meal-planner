@@ -1,4 +1,10 @@
 import { v } from "convex/values";
+import {
+  nutritionFiguresValidator,
+  sanitizeNutritionFigures,
+  type NutrientKey,
+  type NutritionFigures,
+} from "./nutrition";
 
 export const extractedInstructionValidator = v.object({
   position: v.number(),
@@ -36,6 +42,9 @@ export const recipeExtractionValidator = v.object({
   keywords: v.array(v.string()),
   instructions: v.array(extractedInstructionValidator),
   ingredients: v.array(extractedIngredientValidator),
+  // Per-serving figures the page states. Optional: cached extractions made
+  // before nutrition was read have none, and must still validate.
+  nutrition: v.optional(nutritionFiguresValidator),
   warnings: v.array(v.string()),
 });
 
@@ -71,5 +80,22 @@ export type RecipeExtraction = {
     category: string | null;
     isOptional: boolean;
   }>;
+  nutrition?: NutritionFigures;
   warnings: string[];
 };
+
+/** What the model returns: every nutrition figure present but nullable. */
+export type ModelRecipeExtraction = Omit<RecipeExtraction, "nutrition"> & {
+  nutrition: Partial<Record<NutrientKey, number | null>> | null;
+};
+
+/**
+ * Turns the model's output into an extraction, keeping only the nutrition
+ * figures that are in range. Unusable figures are dropped rather than failing
+ * the import.
+ */
+export function extractionFromModelOutput(output: ModelRecipeExtraction): RecipeExtraction {
+  const { nutrition, ...fields } = output;
+  const figures = sanitizeNutritionFigures(nutrition);
+  return figures === undefined ? fields : { ...fields, nutrition: figures };
+}
