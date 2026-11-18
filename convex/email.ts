@@ -12,6 +12,7 @@ import {
   optionalStringField,
   primaryRecipeLinkFromMessage,
 } from "./lib/urls";
+import { aiErrorCodeValidator } from "./lib/aiValidators";
 import { queueRecipeSource } from "./recipeIngestion";
 
 const inboundEmailStatus = v.union(
@@ -22,6 +23,8 @@ const inboundEmailStatus = v.union(
   v.literal("failed"),
   v.literal("no_links"),
   v.literal("already_imported"),
+  v.literal("needs_ai_key"),
+  v.literal("ai_failed"),
 );
 
 function boundedField(value: unknown, key: string, maxLength: number) {
@@ -65,6 +68,10 @@ export const recentInboundEmails = query({
       linkCount: v.number(),
       status: inboundEmailStatus,
       recipeId: v.optional(v.id("recipes")),
+      // The failed import behind this email, for retrying it.
+      importId: v.optional(v.id("recipeImports")),
+      // Why that import failed, when the user's AI settings caused it.
+      aiErrorCode: v.optional(aiErrorCodeValidator),
     }),
   ),
   handler: async (ctx) => {
@@ -101,9 +108,17 @@ export const recentInboundEmails = query({
           | "needs_review"
           | "failed"
           | "no_links"
-          | "already_imported";
+          | "already_imported"
+          | "needs_ai_key"
+          | "ai_failed";
 
+        const aiCode = ownedPrimaryImport?.aiErrorCode;
         if (email.linkCount === 0) status = "no_links";
+        else if (
+          ownedPrimaryImport?.status === "failed" &&
+          (aiCode === "ai_key_missing" || aiCode === "ai_key_unreadable")
+        ) status = "needs_ai_key";
+        else if (ownedPrimaryImport?.status === "failed" && aiCode !== undefined) status = "ai_failed";
         else if (ownedPrimaryImport?.status === "failed") status = "failed";
         else if (ownedPrimaryImport !== null && !["completed", "needs_review"].includes(ownedPrimaryImport.status)) status = "processing";
         else if (email.queuedCount === 0) status = "already_imported";
@@ -120,6 +135,8 @@ export const recentInboundEmails = query({
           linkCount: email.linkCount,
           status,
           recipeId,
+          importId: ownedPrimaryImport?.status === "failed" ? ownedPrimaryImport._id : undefined,
+          aiErrorCode: ownedPrimaryImport?.status === "failed" ? aiCode : undefined,
         };
       }),
     );
@@ -159,6 +176,7 @@ export const importResult = query({
       description: v.optional(v.string()),
       sourceUrl: v.string(),
       errorMessage: v.optional(v.string()),
+      aiErrorCode: v.optional(aiErrorCodeValidator),
     }),
   ),
   handler: async (ctx, { importId }) => {
@@ -177,6 +195,7 @@ export const importResult = query({
       description: recipe?.description,
       sourceUrl: recipeImport.sourceUrl,
       errorMessage: recipeImport.errorMessage,
+      aiErrorCode: recipeImport.aiErrorCode,
     };
   },
 });
@@ -193,6 +212,7 @@ export const queueUrl = mutation({
       userId,
       sourceUrl,
       sourceKind: "direct",
+      whenAiUnavailable: "throw",
     });
     return queued.importId;
   },
@@ -264,6 +284,7 @@ export const onMessageReceived = internalMutation({
         userId: user._id,
         sourceUrl: normalizedUrl,
         sourceKind: "email",
+        whenAiUnavailable: "recordFailure",
         sourceMessageId,
         sourceEventId,
         sourceSubject,

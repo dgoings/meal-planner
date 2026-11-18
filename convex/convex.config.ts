@@ -17,6 +17,9 @@ const app = defineApp({
     SENDER_EMAIL: v.optional(v.string()),
     SENDER_NAME: v.optional(v.string()),
     SITE_URL: v.optional(v.string()),
+    // Encrypts the AI provider keys users save in Settings: 32 random bytes
+    // as base64. Without it, saving keys and every AI feature are refused.
+    AI_KEY_ENCRYPTION_SECRET: v.optional(v.string()),
   },
 });
 

@@ -1,9 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { insertUserRecipe } from "./lib/userRecipes";
 import { startSlotImport } from "./planner";
-import { initAuthTest, signedInUser, type AuthTest } from "./testing.helpers";
+import { giveAiKey, initAuthTest, signedInUser, TEST_AI_KEY_SECRET, type AuthTest } from "./testing.helpers";
+
+beforeEach(() => {
+  vi.stubEnv("AI_KEY_ENCRYPTION_SECRET", TEST_AI_KEY_SECRET);
+});
 
 async function plannerFor(t: AuthTest, email: string) {
   const user = await signedInUser(t, email);
@@ -437,9 +441,21 @@ describe("importing a recipe link into a slot", () => {
   const lunch = { date: "2026-11-18", meal: "lunch" } as const;
   const url = "https://www.example.com/recipes/12345-best-chili.html";
 
+  it("refuses a pasted link when the user has no AI key and leaves the slot alone", async () => {
+    const t = initAuthTest();
+    const { userId, plannerId } = await plannerFor(t, "ada@example.com");
+    const start = vi.fn();
+    await expect(
+      t.run((ctx) => startSlotImport(ctx, userId, { plannerId, ...lunch, url }, start)),
+    ).rejects.toMatchObject({ data: { code: "ai_key_missing" } });
+    expect(start).not.toHaveBeenCalled();
+    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toBeNull();
+  });
+
   it("starts the existing import and shows the slot as pending until the recipe is saved", async () => {
     const t = initAuthTest();
     const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await giveAiKey(t, userId);
     const start = vi.fn().mockResolvedValue("workflow-1");
     const importId = await t.run((ctx) => startSlotImport(ctx, userId, { plannerId, ...lunch, url }, start));
     expect(start).toHaveBeenCalledTimes(1);
@@ -485,6 +501,7 @@ describe("importing a recipe link into a slot", () => {
   it("lets a pending import be a leftovers source and clears it when the slot changes", async () => {
     const t = initAuthTest();
     const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await giveAiKey(t, userId);
     await t.run((ctx) => startSlotImport(ctx, userId, { plannerId, ...lunch, url }, vi.fn().mockResolvedValue("wf")));
     await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-18", meal: "dinner", text: "leftovers" });
     expect(await slotOf(t, plannerId, "2026-11-18", "dinner")).toMatchObject({ from: lunch });
@@ -497,6 +514,7 @@ describe("importing a recipe link into a slot", () => {
   it("rejects text that is not a link and other users' planners", async () => {
     const t = initAuthTest();
     const { userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await giveAiKey(t, userId);
     const grace = await signedInUser(t, "grace@example.com");
     const start = vi.fn().mockResolvedValue("wf");
     await expect(t.run((ctx) => startSlotImport(ctx, userId, { plannerId, ...lunch, url: "Chili" }, start))).rejects.toThrow(/Not a recipe link/);

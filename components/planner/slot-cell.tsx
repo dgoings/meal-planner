@@ -2,6 +2,7 @@
 
 import { useMutation } from "convex/react";
 import Link from "next/link";
+import { convexErrorCode, isMissingKeyCode } from "@/lib/recipe-import-errors";
 import { useEffect, useImperativeHandle, useRef, useState, type FocusEvent, type Ref } from "react";
 import { ImportResultDialog } from "@/components/discovery/import-result-dialog";
 import { Input } from "@/components/ui/input";
@@ -47,6 +48,7 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
   const importLink = useMutation(api.planner.importLink);
   const [pending, setPending] = useState(0);
   const [failed, setFailed] = useState(false);
+  const [needsAiKey, setNeedsAiKey] = useState(false);
   const [resultOpen, setResultOpen] = useState(false);
   const [resultImportId, setResultImportId] = useState<Id<"recipeImports"> | null>(null);
 
@@ -68,7 +70,8 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
       try {
         await change();
         return true;
-      } catch {
+      } catch (error) {
+        setNeedsAiKey(isMissingKeyCode(convexErrorCode(error)));
         setFailed(true);
         return false;
       } finally {
@@ -236,7 +239,13 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
       )}
 
       <SlotMeta slot={slot} pending={pending > 0} onShowImport={showImport} />
-      {failed && <p className="planner-meta planner-error" role="alert">Couldn’t save this meal. Try again.</p>}
+      {failed && (
+        <p className="planner-meta planner-error" role="alert">
+          {needsAiKey
+            ? <>Add an AI key in <Link href="/app/settings#ai-provider">Settings</Link> to import recipe links.</>
+            : "Couldn’t save this meal. Try again."}
+        </p>
+      )}
       {resultImportId !== null && (
         <ImportResultDialog importId={resultImportId} open={resultOpen} onOpenChange={setResultOpen} />
       )}

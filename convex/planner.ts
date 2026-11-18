@@ -571,7 +571,7 @@ export async function startSlotImport(
   assertDate(args.date);
   const url = args.url.trim();
   if (!isRecipeLink(url)) throw new Error("Not a recipe link");
-  const { importId } = await queueRecipeSource(ctx, { userId, sourceUrl: url, sourceKind: "direct" }, startIngestion);
+  const { importId } = await queueRecipeSource(ctx, { userId, sourceUrl: url, sourceKind: "direct", whenAiUnavailable: "throw" }, startIngestion);
   await writeSlot(ctx, args.plannerId, userId, { date: args.date, meal: args.meal }, {
     type: "cook",
     importId,

@@ -1,8 +1,8 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { WorkflowManager } from "@convex-dev/workflow";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { components, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalAction,
   internalMutation,
@@ -10,6 +10,9 @@ import {
   mutation,
   type MutationCtx,
 } from "./_generated/server";
+import { aiReadiness, type AiReadiness } from "./aiSettings";
+import type { AiErrorCode } from "./lib/aiErrorCodes";
+import { aiErrorCodeValidator } from "./lib/aiValidators";
 import type { RecipeScrapePayload } from "./lib/recipeScrape";
 import { normalizeRecipeUrl } from "./lib/urls";
 
@@ -72,6 +75,10 @@ type QueueRecipeSourceArgs = {
   sourceMessageId?: string;
   sourceEventId?: string;
   sourceSubject?: string;
+  // Without a usable AI key, an import the user is waiting on is refused
+  // with ConvexError({ code }); a background import is recorded as failed
+  // with that code so the user can retry it after saving a key.
+  whenAiUnavailable: "throw" | "recordFailure";
 };
 
 export type StartIngestion = (
@@ -97,9 +104,40 @@ async function restartImport(
     workflowId,
     status: "queued",
     errorMessage: undefined,
+    aiErrorCode: undefined,
     finishedAt: undefined,
     updatedAt: Date.now(),
   });
+}
+
+/**
+ * Null when the user's AI key is usable. Otherwise throws for interactive
+ * imports, or returns the code to record for background ones.
+ */
+async function aiUnavailable(
+  ctx: MutationCtx,
+  args: QueueRecipeSourceArgs,
+): Promise<Exclude<AiReadiness, "ready"> | null> {
+  const readiness = await aiReadiness(ctx, args.userId);
+  if (readiness === "ready") return null;
+  if (args.whenAiUnavailable === "throw") throw new ConvexError({ code: readiness });
+  return readiness;
+}
+
+async function recordAiUnavailable(
+  ctx: MutationCtx,
+  importId: Id<"recipeImports">,
+  code: Exclude<AiReadiness, "ready">,
+) {
+  const now = Date.now();
+  await ctx.db.patch(importId, {
+    status: "failed",
+    errorMessage: code,
+    aiErrorCode: code,
+    finishedAt: now,
+    updatedAt: now,
+  });
+  return { importId, queued: false };
 }
 
 function boundedMetadata(value: string | undefined, maximum: number) {
@@ -149,16 +187,21 @@ export async function queueRecipeSource(
       ) {
         return { importId: existing._id, queued: false };
       }
+      const blocked = await aiUnavailable(ctx, args);
+      if (blocked !== null) return await recordAiUnavailable(ctx, existing._id, blocked);
       await restartImport(ctx, existing._id, startIngestion);
       return { importId: existing._id, queued: true };
     }
     if (existing.workflowId === undefined) {
+      const blocked = await aiUnavailable(ctx, args);
+      if (blocked !== null) return await recordAiUnavailable(ctx, existing._id, blocked);
       await restartImport(ctx, existing._id, startIngestion);
       return { importId: existing._id, queued: true };
     }
     return { importId: existing._id, queued: false };
   }
 
+  const blocked = await aiUnavailable(ctx, args);
   const now = Date.now();
   const importId = await ctx.db.insert("recipeImports", {
     requestedBy: args.userId,
@@ -170,11 +213,15 @@ export async function queueRecipeSource(
     sourceMessageId: boundedMetadata(args.sourceMessageId, 500),
     sourceEventId: boundedMetadata(args.sourceEventId, 500),
     sourceSubject: boundedMetadata(args.sourceSubject, 1_000),
-    status: "queued",
+    status: blocked === null ? "queued" : "failed",
+    ...(blocked === null
+      ? {}
+      : { errorMessage: blocked, aiErrorCode: blocked, finishedAt: now }),
     attemptCount: 0,
     createdAt: now,
     updatedAt: now,
   });
+  if (blocked !== null) return { importId, queued: false };
   const workflowId = await startIngestion(ctx, importId);
   await ctx.db.patch(importId, { workflowId });
   return { importId, queued: true };
@@ -191,6 +238,8 @@ export const retryImport = mutation({
       throw new Error("Recipe import was not found");
     }
     if (recipeImport.status !== "failed") return null;
+    const readiness = await aiReadiness(ctx, userId);
+    if (readiness !== "ready") throw new ConvexError({ code: readiness });
     if (recipeImport.attemptCount >= MAX_IMPORT_ATTEMPTS) {
       throw new Error("This recipe link has been retried too many times");
     }
@@ -213,6 +262,7 @@ export const queueAgentDiscoveredUrl = internalMutation({
     const queued = await queueRecipeSource(ctx, {
       ...args,
       sourceKind: "agent_discovery",
+      whenAiUnavailable: "recordFailure",
     });
     return queued.importId;
   },
@@ -238,6 +288,7 @@ export const queueDiscoveredUrl = mutation({
       sourceQuery: normalizedQuery,
       setAsCurrent,
       sourceKind: "agent_discovery",
+      whenAiUnavailable: "throw",
     });
     return queued.importId;
   },
@@ -264,11 +315,31 @@ export const ingestRecipeSource = recipeIngestionWorkflow.define({
       internal.recipeAgentData.ensureProcessingThread,
       { importId },
     );
-    const generated = await step.runAction(internal.recipeAgent.extractRecipe, {
-      importId,
-      threadId: processing.threadId,
-      userId: processing.userId,
-    });
+    let generated;
+    try {
+      generated = await step.runAction(internal.recipeAgent.extractRecipe, {
+        importId,
+        threadId: processing.threadId,
+        userId: processing.userId,
+      });
+    } catch (error) {
+      // Rate limits are retried with backoff; once retries run out, a final
+      // rate limit ends the import with its own message.
+      if (await step.runMutation(internal.recipeIngestion.endIfRateLimited, { importId })) {
+        throw new Error(AI_FAILURE_RECORDED);
+      }
+      throw error;
+    }
+    if (generated.kind === "aiFailure") {
+      // The code is recorded by its own step, so it never has to be read back
+      // out of an error message that page or URL text could have shaped.
+      // Handler errors end the workflow without retries.
+      await step.runMutation(internal.recipeIngestion.recordAiFailure, {
+        importId,
+        code: generated.code,
+      });
+      throw new Error(AI_FAILURE_RECORDED);
+    }
     const persisted = await step.runMutation(
       internal.recipeAgentData.persistGeneratedRecipe,
       {
@@ -332,6 +403,7 @@ export const markScraping = internalMutation({
       status: "scraping",
       attemptCount: recipeImport.attemptCount + 1,
       errorMessage: undefined,
+      aiErrorCode: undefined,
       startedAt: recipeImport.startedAt ?? now,
       updatedAt: now,
     });
@@ -394,6 +466,7 @@ export const persistScrape = internalMutation({
       scrapeArtifactId: artifactId,
       status: "scraped",
       errorMessage: undefined,
+      aiErrorCode: undefined,
       finishedAt: now,
       updatedAt: now,
     });
@@ -460,6 +533,67 @@ export const agentReadyArtifact = internalQuery({
   },
 });
 
+const AI_FAILURE_RECORDED = "AI failure recorded";
+
+async function endWithAiFailure(
+  ctx: MutationCtx,
+  recipeImport: Doc<"recipeImports">,
+  code: AiErrorCode,
+) {
+  const now = Date.now();
+  await ctx.db.patch(recipeImport._id, {
+    status: "failed",
+    errorMessage: code,
+    aiErrorCode: code,
+    attemptCount: Math.max(0, recipeImport.attemptCount - 1),
+    finishedAt: now,
+    updatedAt: now,
+  });
+}
+
+/**
+ * Ends an import with a failure caused by the user's AI settings or provider
+ * account. It does not use up an attempt: the user can fix the key and retry.
+ */
+export const recordAiFailure = internalMutation({
+  args: { importId: v.id("recipeImports"), code: aiErrorCodeValidator },
+  returns: v.null(),
+  handler: async (ctx, { importId, code }) => {
+    const recipeImport = await ctx.db.get(importId);
+    if (recipeImport !== null) await endWithAiFailure(ctx, recipeImport, code);
+    return null;
+  },
+});
+
+/** Remembers whether the latest failed extraction attempt was a rate limit. */
+export const noteExtractionError = internalMutation({
+  args: { importId: v.id("recipeImports"), rateLimited: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, { importId, rateLimited }) => {
+    if ((await ctx.db.get(importId)) === null) return null;
+    await ctx.db.patch(importId, { extractionRateLimited: rateLimited, updatedAt: Date.now() });
+    return null;
+  },
+});
+
+/**
+ * After extraction ran out of retries: when the last attempt was rate
+ * limited, ends the import with ai_rate_limited and returns true. Like other
+ * AI failures it gives the attempt back, because the provider throttled the
+ * user's own key after backoff was already spent; the page was never the
+ * problem, and the five-attempt cap should not block a later Try again.
+ */
+export const endIfRateLimited = internalMutation({
+  args: { importId: v.id("recipeImports") },
+  returns: v.boolean(),
+  handler: async (ctx, { importId }) => {
+    const recipeImport = await ctx.db.get(importId);
+    if (recipeImport === null || recipeImport.extractionRateLimited !== true) return false;
+    await endWithAiFailure(ctx, recipeImport, "ai_rate_limited");
+    return true;
+  },
+});
+
 export const onIngestionComplete = internalMutation({
   args: {
     workflowId: v.string(),
@@ -481,6 +615,10 @@ export const onIngestionComplete = internalMutation({
 
     const rawMessage =
       result.kind === "failed" ? result.error : "Recipe ingestion was canceled";
+    // recordAiFailure already stored this run's outcome.
+    if (recipeImport.status === "failed" && recipeImport.aiErrorCode !== undefined) {
+      return null;
+    }
     const errorMessage = rawMessage.slice(0, 500);
     const now = Date.now();
     await ctx.db.patch(context.importId, {

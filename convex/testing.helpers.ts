@@ -21,6 +21,9 @@ const TEST_CLIENT_IP = "203.0.113.7";
 
 export const TEST_PASSWORD = "correct horse battery staple";
 
+/** A fixed, fake AES key for tests (32 bytes of 0x07). Not a real secret. */
+export const TEST_AI_KEY_SECRET = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+
 export type AuthTest = ReturnType<typeof initAuthTest>;
 
 /**
@@ -92,4 +95,24 @@ export async function signedInUser(t: AuthTest, email: string) {
     userId: result.tokens.userId as Id<"users">,
     as: t.withIdentity(sessionIdentity(result.tokens)),
   };
+}
+
+/**
+ * Gives `userId` a saved AI key. The ciphertext is a placeholder: queueing
+ * checks only that a usable row exists, and never decrypts it.
+ */
+export async function giveAiKey(t: AuthTest, userId: Id<"users">) {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("aiSettings", {
+      userId,
+      provider: "anthropic",
+      keyCiphertext: "placeholder",
+      keyIv: "placeholder",
+      keyScheme: 1,
+      keyHint: "1a2b",
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
 }

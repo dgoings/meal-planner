@@ -8,12 +8,19 @@
  * @module
  */
 
+import type * as aiSettings from "../aiSettings.js";
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as email from "../email.js";
 import type * as groceryLists from "../groceryLists.js";
 import type * as http from "../http.js";
 import type * as lib_agentmail from "../lib/agentmail.js";
+import type * as lib_aiErrorCodes from "../lib/aiErrorCodes.js";
+import type * as lib_aiErrors from "../lib/aiErrors.js";
+import type * as lib_aiKeyCrypto from "../lib/aiKeyCrypto.js";
+import type * as lib_aiModel from "../lib/aiModel.js";
+import type * as lib_aiProviderCheck from "../lib/aiProviderCheck.js";
+import type * as lib_aiValidators from "../lib/aiValidators.js";
 import type * as lib_boundedFetch from "../lib/boundedFetch.js";
 import type * as lib_groceryCategory from "../lib/groceryCategory.js";
 import type * as lib_manualIngredient from "../lib/manualIngredient.js";
@@ -22,10 +29,10 @@ import type * as lib_plannerSlots from "../lib/plannerSlots.js";
 import type * as lib_plannerValidators from "../lib/plannerValidators.js";
 import type * as lib_publicDns from "../lib/publicDns.js";
 import type * as lib_recipeAgentTypes from "../lib/recipeAgentTypes.js";
-import type * as lib_recipeModel from "../lib/recipeModel.js";
 import type * as lib_recipeScrape from "../lib/recipeScrape.js";
 import type * as lib_recipeSearch from "../lib/recipeSearch.js";
 import type * as lib_urls from "../lib/urls.js";
+import type * as lib_userModelConfig from "../lib/userModelConfig.js";
 import type * as lib_userRecipes from "../lib/userRecipes.js";
 import type * as planner from "../planner.js";
 import type * as recipeAgent from "../recipeAgent.js";
@@ -47,12 +54,19 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  aiSettings: typeof aiSettings;
   auth: typeof auth;
   crons: typeof crons;
   email: typeof email;
   groceryLists: typeof groceryLists;
   http: typeof http;
   "lib/agentmail": typeof lib_agentmail;
+  "lib/aiErrorCodes": typeof lib_aiErrorCodes;
+  "lib/aiErrors": typeof lib_aiErrors;
+  "lib/aiKeyCrypto": typeof lib_aiKeyCrypto;
+  "lib/aiModel": typeof lib_aiModel;
+  "lib/aiProviderCheck": typeof lib_aiProviderCheck;
+  "lib/aiValidators": typeof lib_aiValidators;
   "lib/boundedFetch": typeof lib_boundedFetch;
   "lib/groceryCategory": typeof lib_groceryCategory;
   "lib/manualIngredient": typeof lib_manualIngredient;
@@ -61,10 +75,10 @@ declare const fullApi: ApiFromModules<{
   "lib/plannerValidators": typeof lib_plannerValidators;
   "lib/publicDns": typeof lib_publicDns;
   "lib/recipeAgentTypes": typeof lib_recipeAgentTypes;
-  "lib/recipeModel": typeof lib_recipeModel;
   "lib/recipeScrape": typeof lib_recipeScrape;
   "lib/recipeSearch": typeof lib_recipeSearch;
   "lib/urls": typeof lib_urls;
+  "lib/userModelConfig": typeof lib_userModelConfig;
   "lib/userRecipes": typeof lib_userRecipes;
   planner: typeof planner;
   recipeAgent: typeof recipeAgent;

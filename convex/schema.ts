@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { planSlotValidator, weekStartValidator } from "./lib/plannerValidators";
+import { aiErrorCodeValidator, aiProviderValidator } from "./lib/aiValidators";
 
 const importStatus = v.union(
   v.literal("queued"),
@@ -61,6 +62,24 @@ export default defineSchema({
     updatedAt: v.optional(v.number()),
   }).index("email", ["email"]),
 
+  // The provider, model and encrypted API key a user saved for AI features.
+  // Kept off `users`, whose whole row is sent to the browser. Only the hint is
+  // ever returned to a client; see `convex/lib/aiKeyCrypto.ts`.
+  aiSettings: defineTable({
+    userId: v.id("users"),
+    provider: aiProviderValidator,
+    // Unset means the provider default (Anthropic only).
+    model: v.optional(v.string()),
+    keyCiphertext: v.string(),
+    keyIv: v.string(),
+    keyScheme: v.literal(1),
+    keyHint: v.string(),
+    // Set when the key could not be decrypted, so Settings asks for it again.
+    unreadableAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
+
   // Maps each account to its AgentMail inbox. The AgentMail component keeps
   // message and thread contents in its isolated component tables.
   userInboxes: defineTable({
@@ -116,6 +135,11 @@ export default defineSchema({
     recipeId: v.optional(v.id("recipes")),
     generatedGroceryListId: v.optional(v.id("groceryLists")),
     errorMessage: v.optional(v.string()),
+    // Set only by server code that knows the failure came from the user's AI
+    // settings or provider account, never inferred from an error message.
+    aiErrorCode: v.optional(aiErrorCodeValidator),
+    // Whether the latest failed extraction attempt was a provider rate limit.
+    extractionRateLimited: v.optional(v.boolean()),
     sourceMessageId: v.optional(v.string()),
     sourceEventId: v.optional(v.string()),
     sourceSubject: v.optional(v.string()),

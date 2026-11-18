@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { recipeImportFailureMessage } from "@/lib/recipe-import-errors";
+import { recipeImportFailureMessage, retryFailureMessage } from "@/lib/recipe-import-errors";
 
 export function ImportResultDialog({
   importId,
@@ -23,15 +23,15 @@ export function ImportResultDialog({
 }) {
   const router = useRouter();
   const retryImport = useMutation(api.recipeIngestion.retryImport);
-  const [retryFailed, setRetryFailed] = useState(false);
+  const [retryFailed, setRetryFailed] = useState<string | null>(null);
 
   async function retry() {
     if (importId === null) return;
-    setRetryFailed(false);
+    setRetryFailed(null);
     try {
       await retryImport({ importId });
-    } catch {
-      setRetryFailed(true);
+    } catch (error) {
+      setRetryFailed(retryFailureMessage(error) ?? "This link can’t be retried again.");
     }
   }
   const importResult = useQuery(
@@ -49,9 +49,9 @@ export function ImportResultDialog({
         {importResult?.status === "failed" ? (
           <Alert className="mt-5 border-red-300 bg-red-50 text-red-900" role="alert">
             <AlertTitle>Recipe import failed</AlertTitle>
-            <AlertDescription>{recipeImportFailureMessage(importResult.errorMessage)}</AlertDescription>
+            <AlertDescription>{recipeImportFailureMessage(importResult.errorMessage, importResult.aiErrorCode)}</AlertDescription>
             {retryFailed
-              ? <p className="mt-3 text-sm font-bold">This link can’t be retried again.</p>
+              ? <p className="mt-3 text-sm font-bold">{retryFailed}</p>
               : <Button className="mt-3" size="sm" variant="secondary" onClick={() => void retry()}><RotateCcw size={16} />Try again</Button>}
           </Alert>
         ) : importResult?.recipeId ? (

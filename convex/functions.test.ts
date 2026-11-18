@@ -2,18 +2,29 @@ import { Blob as NodeBlob } from "node:buffer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import { userModelConfig } from "./lib/userModelConfig";
 import { queueRecipeSource } from "./recipeIngestion";
 import {
   emailedCode,
   fromBrowser,
+  giveAiKey,
   initAuthTest,
   signedInUser,
   signUp,
+  TEST_AI_KEY_SECRET,
   TEST_PASSWORD,
   type AuthTest,
 } from "./testing.helpers";
 
 const initTest = initAuthTest;
+
+beforeEach(() => {
+  vi.stubEnv("AI_KEY_ENCRYPTION_SECRET", TEST_AI_KEY_SECRET);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 /** A user row for tests that only need a user id, with no session. */
 async function createUser(t: AuthTest, name: string) {
@@ -311,6 +322,7 @@ describe("email functions", () => {
   it("retries a failed scrape on resubmission until the attempt limit", async () => {
     const t = initTest();
     const userId = await createSignedInUser(t, "RetryCook");
+    await giveAiKey(t, userId);
     const importId = await t.run(async (ctx) => {
       const now = Date.now();
       return await ctx.db.insert("recipeImports", {
@@ -332,7 +344,12 @@ describe("email functions", () => {
     const retried = await t.run(async (ctx) =>
       queueRecipeSource(
         ctx,
-        { userId, sourceUrl: "https://example.com/flaky-recipe", sourceKind: "direct" },
+        {
+          userId,
+          sourceUrl: "https://example.com/flaky-recipe",
+          sourceKind: "direct",
+          whenAiUnavailable: "throw",
+        },
         start,
       ),
     );
@@ -347,7 +364,12 @@ describe("email functions", () => {
     const exhausted = await t.run(async (ctx) =>
       queueRecipeSource(
         ctx,
-        { userId, sourceUrl: "https://example.com/flaky-recipe", sourceKind: "direct" },
+        {
+          userId,
+          sourceUrl: "https://example.com/flaky-recipe",
+          sourceKind: "direct",
+          whenAiUnavailable: "throw",
+        },
         start,
       ),
     );
@@ -460,6 +482,7 @@ describe("email functions", () => {
   it("reimports an emailed URL when its previous recipe was deleted", async () => {
     const t = initTest();
     const userId = await createUser(t, "DeletedEmailRecipe");
+    await giveAiKey(t, userId);
     const oldImportId = await t.run(async (ctx) => {
       const now = Date.now();
       const importId = await ctx.db.insert("recipeImports", {
@@ -498,6 +521,7 @@ describe("email functions", () => {
           userId,
           sourceUrl: "https://example.com/deleted-recipe",
           sourceKind: "email",
+          whenAiUnavailable: "recordFailure",
           sourceSubject: "Import this again",
         },
         async () => "replacement-workflow",
@@ -612,6 +636,167 @@ describe("email functions", () => {
   });
 });
 
+describe("imports without a usable AI key", () => {
+  const configuredInbox = process.env.AGENTMAIL_INBOX_ID;
+
+  beforeEach(() => {
+    process.env.AGENTMAIL_INBOX_ID = "inbox-1";
+  });
+
+  afterEach(() => {
+    if (configuredInbox === undefined) delete process.env.AGENTMAIL_INBOX_ID;
+    else process.env.AGENTMAIL_INBOX_ID = configuredInbox;
+  });
+
+  async function importCount(t: AuthTest) {
+    return await t.run(async (ctx) => (await ctx.db.query("recipeImports").collect()).length);
+  }
+
+  it("refuses link and search imports up front", async () => {
+    const t = initTest();
+    const userId = await createSignedInUser(t, "NoKey");
+    const asUser = sessionOf(t, userId);
+
+    await expect(
+      asUser.mutation(api.email.queueUrl, { sourceUrl: "https://example.com/new-recipe" }),
+    ).rejects.toThrow("ai_key_missing");
+    await expect(
+      asUser.mutation(api.recipeIngestion.queueDiscoveredUrl, {
+        sourceUrl: "https://example.com/found-recipe",
+        sourceQuery: "stew",
+      }),
+    ).rejects.toThrow("ai_key_missing");
+    expect(await importCount(t)).toBe(0);
+
+    await giveAiKey(t, userId);
+    vi.stubEnv("AI_KEY_ENCRYPTION_SECRET", "");
+    await expect(
+      asUser.mutation(api.email.queueUrl, { sourceUrl: "https://example.com/new-recipe" }),
+    ).rejects.toThrow("ai_not_configured");
+    expect(await importCount(t)).toBe(0);
+  });
+
+  it("records a background import as failed and restarts it once a key is saved", async () => {
+    const t = initTest();
+    const userId = await createUser(t, "Background");
+    const start = vi.fn().mockResolvedValue("background-workflow");
+    const queue = () =>
+      t.run(async (ctx) =>
+        queueRecipeSource(
+          ctx,
+          {
+            userId,
+            sourceUrl: "https://example.com/emailed-recipe",
+            sourceKind: "email",
+            whenAiUnavailable: "recordFailure",
+          },
+          start,
+        ),
+      );
+
+    const first = await queue();
+    expect(first.queued).toBe(false);
+    expect(start).not.toHaveBeenCalled();
+    expect(await t.run(async (ctx) => ctx.db.get(first.importId))).toMatchObject({
+      status: "failed",
+      errorMessage: "ai_key_missing",
+      attemptCount: 0,
+    });
+
+    expect(await queue()).toEqual({ importId: first.importId, queued: false });
+    expect(start).not.toHaveBeenCalled();
+
+    await giveAiKey(t, userId);
+    expect(await queue()).toEqual({ importId: first.importId, queued: true });
+    expect(start).toHaveBeenCalledOnce();
+    expect(await t.run(async (ctx) => ctx.db.get(first.importId))).toMatchObject({
+      status: "queued",
+      workflowId: "background-workflow",
+    });
+  });
+
+  it("shows a forwarded email without a key as needing one", async () => {
+    const t = initTest();
+    const userId = await createSignedInUser(t, "Forwarder");
+    await t.mutation(internal.email.onMessageReceived, {
+      eventId: "no-key-event",
+      thread: {},
+      message: {
+        inbox_id: "inbox-1",
+        from: "forwarder@example.com",
+        text: "https://example.com/forwarded-recipe",
+      },
+    });
+
+    const [email] = await sessionOf(t, userId).query(api.email.recentInboundEmails);
+    expect(email.status).toBe("needs_ai_key");
+    expect(email.importId).toBeDefined();
+    expect(await t.run(async (ctx) => ctx.db.get(email.importId!))).toMatchObject({
+      status: "failed",
+      errorMessage: "ai_key_missing",
+    });
+  });
+
+  it("reports every other AI failure on a forwarded email with its code", async () => {
+    const t = initTest();
+    const userId = await createSignedInUser(t, "Throttled");
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const importId = await ctx.db.insert("recipeImports", {
+        requestedBy: userId,
+        sourceUrl: "https://example.com/no-credit",
+        normalizedUrl: "https://example.com/no-credit",
+        sourceKind: "email",
+        status: "failed",
+        attemptCount: 0,
+        errorMessage: "ai_key_no_credit",
+        aiErrorCode: "ai_key_no_credit",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("inboundRecipeEmails", {
+        userId,
+        inboxId: "inbox-1",
+        eventId: "no-credit-event",
+        receivedAt: now,
+        linkCount: 1,
+        queuedCount: 1,
+        primaryImportId: importId,
+      });
+    });
+
+    const [email] = await sessionOf(t, userId).query(api.email.recentInboundEmails);
+    expect(email).toMatchObject({ status: "ai_failed", aiErrorCode: "ai_key_no_credit" });
+    expect(email.importId).toBeDefined();
+  });
+
+  it("refuses a retry without a key before counting the attempt", async () => {
+    const t = initTest();
+    const userId = await createSignedInUser(t, "Retrier");
+    const importId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("recipeImports", {
+        requestedBy: userId,
+        sourceUrl: "https://example.com/blocked",
+        normalizedUrl: "https://example.com/blocked",
+        sourceKind: "email",
+        status: "failed",
+        attemptCount: 0,
+        errorMessage: "ai_key_missing",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    await expect(
+      sessionOf(t, userId).mutation(api.recipeIngestion.retryImport, { importId }),
+    ).rejects.toThrow("ai_key_missing");
+    expect(await t.run(async (ctx) => ctx.db.get(importId))).toMatchObject({
+      status: "failed",
+      attemptCount: 0,
+    });
+  });
+});
+
 describe("user settings", () => {
   it("requires authentication and saves normalized profile settings", async () => {
     const t = initTest();
@@ -696,7 +881,17 @@ describe("user settings", () => {
         updatedBy: userId,
         updatedAt: now,
       });
-      return { savedRecipeId, groceryListId, inboxId, plannerId, plannerMealId, cookSlotId, outSlotId };
+      const aiSettingsId = await ctx.db.insert("aiSettings", {
+        userId,
+        provider: "anthropic",
+        keyCiphertext: "placeholder",
+        keyIv: "placeholder",
+        keyScheme: 1,
+        keyHint: "1a2b",
+        createdAt: now,
+        updatedAt: now,
+      });
+      return { savedRecipeId, groceryListId, inboxId, aiSettingsId, plannerId, plannerMealId, cookSlotId, outSlotId };
     });
 
     vi.useFakeTimers();
@@ -1046,6 +1241,140 @@ describe("recipe scrape persistence", () => {
       expect(recipeImport?.status).toBe("failed");
       expect(recipeImport?.errorMessage).toHaveLength(500);
     });
+  });
+
+  it("records an AI failure through its own step and gives the attempt back", async () => {
+    const t = initTest();
+    const importId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("recipeImports", {
+        sourceUrl: "https://example.com/ai",
+        normalizedUrl: "https://example.com/ai",
+        sourceKind: "direct",
+        status: "processing",
+        attemptCount: 1,
+        workflowId: "workflow-ai",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    await t.mutation(internal.recipeIngestion.recordAiFailure, {
+      importId,
+      code: "ai_key_invalid",
+    });
+    await t.mutation(internal.recipeIngestion.onIngestionComplete, {
+      workflowId: "workflow-ai",
+      context: { importId },
+      result: { kind: "failed", error: "Uncaught Error: AI failure recorded\n    at handler" },
+    });
+    expect(await t.run(async (ctx) => ctx.db.get(importId))).toMatchObject({
+      status: "failed",
+      errorMessage: "ai_key_invalid",
+      aiErrorCode: "ai_key_invalid",
+      attemptCount: 0,
+    });
+  });
+
+  it("ends with the rate-limit message only when the last extraction attempt was rate limited", async () => {
+    const t = initTest();
+    const importId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("recipeImports", {
+        sourceUrl: "https://example.com/limited",
+        normalizedUrl: "https://example.com/limited",
+        sourceKind: "direct",
+        status: "processing",
+        attemptCount: 1,
+        workflowId: "workflow-limited",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    await t.mutation(internal.recipeIngestion.noteExtractionError, { importId, rateLimited: true });
+    await t.mutation(internal.recipeIngestion.noteExtractionError, { importId, rateLimited: false });
+    expect(await t.mutation(internal.recipeIngestion.endIfRateLimited, { importId })).toBe(false);
+    expect(await t.run(async (ctx) => ctx.db.get(importId))).toMatchObject({
+      status: "processing",
+      attemptCount: 1,
+    });
+
+    await t.mutation(internal.recipeIngestion.noteExtractionError, { importId, rateLimited: true });
+    expect(await t.mutation(internal.recipeIngestion.endIfRateLimited, { importId })).toBe(true);
+    expect(await t.run(async (ctx) => ctx.db.get(importId))).toMatchObject({
+      status: "failed",
+      aiErrorCode: "ai_rate_limited",
+      attemptCount: 0,
+    });
+  });
+
+  it("turns an extraction that has no usable key into a stored, retryable code", async () => {
+    const t = initTest();
+    const userId = await createSignedInUser(t, "NoKeyExtract");
+    const importId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("recipeImports", {
+        requestedBy: userId,
+        sourceUrl: "https://example.com/extract",
+        normalizedUrl: "https://example.com/extract",
+        sourceKind: "direct",
+        status: "processing",
+        attemptCount: 1,
+        workflowId: "workflow-extract",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    // The decision extractRecipe makes before calling a model.
+    const settings = await t.query(internal.aiSettings.encryptedForUser, { userId });
+    const outcome = await userModelConfig(settings, TEST_AI_KEY_SECRET, userId);
+    expect(outcome).toEqual({ kind: "aiFailure", code: "ai_key_missing" });
+    if (outcome.kind !== "aiFailure") return;
+
+    // What the workflow does with it.
+    await t.mutation(internal.recipeIngestion.recordAiFailure, { importId, code: outcome.code });
+    await t.mutation(internal.recipeIngestion.onIngestionComplete, {
+      workflowId: "workflow-extract",
+      context: { importId },
+      result: { kind: "failed", error: "Uncaught Error: AI failure recorded" },
+    });
+    expect(await sessionOf(t, userId).query(api.email.importResult, { importId })).toMatchObject({
+      status: "failed",
+      aiErrorCode: "ai_key_missing",
+    });
+    expect(await t.run(async (ctx) => (await ctx.db.get(importId))?.attemptCount)).toBe(0);
+  });
+
+  it("never reads an AI failure out of an error message", async () => {
+    const t = initTest();
+    const importId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("recipeImports", {
+        sourceUrl: "https://ai_key_invalid.example.com/x",
+        normalizedUrl: "https://ai_key_invalid.example.com/x",
+        sourceKind: "direct",
+        status: "scraping",
+        attemptCount: 1,
+        workflowId: "workflow-dns",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    await t.mutation(internal.recipeIngestion.onIngestionComplete, {
+      workflowId: "workflow-dns",
+      context: { importId },
+      result: {
+        kind: "failed",
+        error: "Uncaught Error: recipe_scrape_failed: Could not resolve ai_key_invalid.example.com",
+      },
+    });
+    const recipeImport = await t.run(async (ctx) => ctx.db.get(importId));
+    expect(recipeImport).toMatchObject({ status: "failed", attemptCount: 1 });
+    expect(recipeImport?.aiErrorCode).toBeUndefined();
+    expect(recipeImport?.errorMessage).toContain("Could not resolve ai_key_invalid.example.com");
   });
 });
 

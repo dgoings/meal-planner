@@ -153,6 +153,9 @@ export const continueAccountDeletion = internalMutation({
         sessionIds: sessions.map((session) => session.sessionId),
       });
       await ctx.runMutation(components.authEmail.verifiedEmails.deleteUser, { userId });
+      // The saved AI key goes first, with the credentials.
+      const aiSettings = await ctx.db.query("aiSettings").withIndex("by_user", (q) => q.eq("userId", userId)).unique();
+      if (aiSettings !== null) await ctx.db.delete(aiSettings._id);
       await advance("savedRecipes");
       return null;
     }
