@@ -220,6 +220,23 @@ describe("setType", () => {
     expect(titles).toEqual(["Chili", "Tacos"]);
   });
 
+  it("carries the name of other leftovers to Cook and Eat out", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "leftovers" });
+    await as.mutation(api.planner.commitOther, { plannerId, ...lunch, text: "Pizza" });
+    await as.mutation(api.planner.setType, { plannerId, ...lunch, type: "out" });
+    const out = await slotOf(t, plannerId, lunch.date, lunch.meal);
+    const meal = await t.run(async (ctx) => (out?.type === "out" && out.mealId ? ctx.db.get(out.mealId) : null));
+    expect(meal?.name).toBe("Pizza");
+
+    await as.mutation(api.planner.setType, { plannerId, ...lunch, type: "left" });
+    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toMatchObject({ type: "left", from: "other" });
+    await as.mutation(api.planner.commitOther, { plannerId, ...lunch, text: "Curry" });
+    await as.mutation(api.planner.setType, { plannerId, ...lunch, type: "cook" });
+    expect((await recipesOf(t, userId)).map((recipe) => recipe.title)).toEqual(["Curry"]);
+  });
+
   it("uses unsaved typed text as the name in one change, so Eat out creates no recipe", async () => {
     const t = initAuthTest();
     const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");

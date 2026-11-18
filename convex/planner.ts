@@ -327,9 +327,12 @@ export const setType = mutation({
       return null;
     }
     const named = row === null || row.type === "cook" || row.type === "out";
+    // A slot's own name carries: Cook's, Eat out's, and other leftovers'
+    // (a leftovers source's name belongs to that earlier meal).
+    const ownName = row !== null && (named || (row.type === "left" && row.from === "other"));
     const carried =
       text !== undefined && named ? cleanName(text)
-      : row !== null && (row.type === "cook" || row.type === "out") ? await slotName(ctx, row)
+      : ownName ? await slotName(ctx, row)
       : "";
     await planSlot(ctx, plannerId, userId, ref, type, carried);
     return null;
