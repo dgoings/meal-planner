@@ -6,6 +6,7 @@ import {
 } from "./_generated/server";
 import { requireUser } from "./lib/auth";
 import { normalizeIngredientName } from "./lib/ingredientName";
+import { isRecipeLink } from "./lib/plannerRules";
 import { ingredientCatalogEntry, insertUserRecipe } from "./lib/userRecipes";
 import { queueRecipeSource, startRecipeIngestion, type StartIngestion } from "./recipeIngestion";
 
@@ -550,7 +551,7 @@ export async function startRecipeFill(
 ): Promise<Id<"recipeImports">> {
   await requireOwnedRecipe(ctx, userId, args.recipeId);
   const sourceUrl = args.sourceUrl.trim();
-  if (!/^https?:\/\/\S+$/i.test(sourceUrl)) throw new Error("Paste a recipe link that starts with http:// or https://");
+  if (!isRecipeLink(sourceUrl)) throw new Error("Paste a recipe link that starts with http:// or https://");
   const { importId } = await queueRecipeSource(
     ctx,
     { userId, sourceUrl, sourceKind: "direct" },
@@ -572,7 +573,7 @@ const FILL_INGREDIENT_LIMIT = 200;
 
 /**
  * Copies a finished import's recipe into the owner's existing recipe, which
- * keeps its id (and so its notes and favourite): ingredients,
+ * keeps its id (and so its planner slots, notes and favourite): ingredients,
  * instructions, times, servings, image and source; the title only with
  * `useImportedTitle`. A recipe that already has ingredients or instructions
  * is replaced only with `replaceExisting`. The import's draft is then

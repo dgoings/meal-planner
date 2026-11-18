@@ -115,10 +115,12 @@ describe("importing a link into an existing recipe", () => {
     expect(await t.run((ctx) => ctx.db.get(importId))).toMatchObject({ requestedBy: ada.userId, sourceUrl: url, status: "queued" });
   });
 
-  it("fills the same recipe from the import, keeping its id and its title unless accepted", async () => {
+  it("fills the same recipe from the import, keeping its id, its planner slots and its title unless accepted", async () => {
     const t = initAuthTest();
     const ada = await signedInUser(t, "ada@example.com");
     const chili = await t.run((ctx) => insertUserRecipe(ctx, ada.userId, { title: "Chili", ingredients: [], instructions: [] }));
+    const plannerId = await ada.as.mutation(api.planner.ensure, {});
+    await ada.as.mutation(api.planner.attachRecipe, { plannerId, date: "2026-11-18", meal: "dinner", recipeId: chili });
     const { importId, draftId, imageStorageId } = await finishedImport(t, ada.userId);
 
     await ada.as.mutation(api.recipeCards.fillFromImport, { recipeId: chili, importId, useImportedTitle: false, replaceExisting: false });
@@ -150,6 +152,9 @@ describe("importing a link into an existing recipe", () => {
     // The draft the import made is discarded rather than left as a second recipe.
     expect(await t.run((ctx) => ctx.db.get(draftId))).toMatchObject({ deletedAt: expect.any(Number) });
     expect((await ada.as.query(api.recipes.listBook, {})).map((recipe) => recipe._id)).toEqual([chili]);
+
+    const { slots } = await ada.as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(slots[0]).toMatchObject({ name: "Chili", recipe: { recipeId: chili, ingredientCount: 2, available: true } });
   });
 
   it("takes the imported title only when accepted, and refuses to replace contents without consent", async () => {
