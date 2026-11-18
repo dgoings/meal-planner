@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { insertUserRecipe } from "./lib/userRecipes";
+import { startSlotImport } from "./planner";
 import { initAuthTest, signedInUser, type AuthTest } from "./testing.helpers";
 
 async function plannerFor(t: AuthTest, email: string) {
@@ -352,5 +353,77 @@ describe("week and suggestions queries", () => {
     await expect(t.query(api.planner.week, { plannerId, start: "2026-11-16" })).rejects.toThrow(/Unauthenticated/);
     await expect(grace.as.query(api.planner.week, { plannerId, start: "2026-11-16" })).rejects.toThrow(/Planner was not found/);
     await expect(grace.as.query(api.planner.suggestions, { plannerId })).rejects.toThrow(/Planner was not found/);
+  });
+});
+
+describe("importing a recipe link into a slot", () => {
+  const lunch = { date: "2026-11-18", meal: "lunch" } as const;
+  const url = "https://www.example.com/recipes/12345-best-chili.html";
+
+  it("starts the existing import and shows the slot as pending until the recipe is saved", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    const start = vi.fn().mockResolvedValue("workflow-1");
+    const importId = await t.run((ctx) => startSlotImport(ctx, userId, { plannerId, ...lunch, url }, start));
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(await slotOf(t, plannerId, lunch.date, lunch.meal)).toMatchObject({ type: "cook", importId, importName: "Best chili" });
+
+    const again = await t.run((ctx) => startSlotImport(ctx, userId, { plannerId, date: "2026-11-19", meal: "lunch", url }, start));
+    expect(again).toBe(importId);
+    expect(start).toHaveBeenCalledTimes(1);
+
+    let week = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(week.slots[0]).toEqual({ ...lunch, type: "cook", name: "Best chili", import: { importId, status: "queued" } });
+
+    const recipeId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const id = await ctx.db.insert("recipes", {
+        importId,
+        sourceUrl: url,
+        normalizedSourceUrl: url,
+        title: "The Best Chili",
+        cuisines: [],
+        categories: [],
+        keywords: [],
+        instructions: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.patch(importId, { recipeId: id, status: "completed" });
+      return id;
+    });
+    week = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(week.slots[0]).toEqual({ ...lunch, type: "cook", name: "Best chili", import: { importId, status: "completed", recipeId } });
+
+    await as.mutation(api.recipeCards.addToBook, { recipeId });
+    week = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(week.slots[0]).toEqual({
+      ...lunch,
+      type: "cook",
+      name: "The Best Chili",
+      recipe: { recipeId, ingredientCount: 0, available: true },
+    });
+  });
+
+  it("lets a pending import be a leftovers source and clears it when the slot changes", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await t.run((ctx) => startSlotImport(ctx, userId, { plannerId, ...lunch, url }, vi.fn().mockResolvedValue("wf")));
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-18", meal: "dinner", text: "leftovers" });
+    expect(await slotOf(t, plannerId, "2026-11-18", "dinner")).toMatchObject({ from: lunch });
+
+    await as.mutation(api.planner.commitText, { plannerId, ...lunch, text: "Tacos" });
+    const slot = await slotOf(t, plannerId, lunch.date, lunch.meal);
+    expect(slot).not.toHaveProperty("importId");
+  });
+
+  it("rejects text that is not a link and other users' planners", async () => {
+    const t = initAuthTest();
+    const { userId, plannerId } = await plannerFor(t, "ada@example.com");
+    const grace = await signedInUser(t, "grace@example.com");
+    const start = vi.fn().mockResolvedValue("wf");
+    await expect(t.run((ctx) => startSlotImport(ctx, userId, { plannerId, ...lunch, url: "Chili" }, start))).rejects.toThrow(/Not a recipe link/);
+    await expect(t.run((ctx) => startSlotImport(ctx, grace.userId, { plannerId, ...lunch, url }, start))).rejects.toThrow(/Planner was not found/);
+    await expect(grace.as.mutation(api.planner.importLink, { plannerId, ...lunch, url })).rejects.toThrow(/Planner was not found/);
   });
 });

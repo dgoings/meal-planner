@@ -10,7 +10,10 @@ type Ref = Parameters<typeof getFunctionName>[0];
 
 const mocks = vi.hoisted(() => ({ mutations: {} as Record<string, ReturnType<typeof vi.fn>> }));
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
 vi.mock("convex/react", () => ({
+  useQuery: () => undefined,
   useMutation: (ref: Ref) => {
     const name = getFunctionName(ref);
     mocks.mutations[name] ??= vi.fn().mockResolvedValue({ type: "cook", name: "" });
@@ -123,12 +126,43 @@ describe("SlotCell editing", () => {
     expect(within(lunch).getByRole("button", { name: "Skip" })).not.toHaveAttribute("aria-disabled");
   });
 
-  it("does not commit a pasted link yet and says where links go", async () => {
+  it("imports a pasted link through the existing import flow and opens its result", async () => {
     const user = userEvent.setup();
+    mutation("importLink").mockResolvedValue("import-1");
+    const announced = vi.fn();
+    window.addEventListener("perfectplate:recipe-import-started", announced);
     renderDays(["2026-11-16"]);
     await user.type(input("Monday lunch"), "https://example.com/best-chili{Enter}");
+    expect(mutation("importLink")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", url: "https://example.com/best-chili" });
     expect(mutation("commitText")).not.toHaveBeenCalled();
-    expect(screen.getByText("Paste recipe links on Discover for now.")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Recipe result" })).toBeInTheDocument();
+    expect(announced).toHaveBeenCalledTimes(1);
+    window.removeEventListener("perfectplate:recipe-import-started", announced);
+  });
+
+  it("shows where a pending import is", () => {
+    const importId = "import-1" as Id<"recipeImports">;
+    const recipeId = "recipe-1" as Id<"recipes">;
+    renderDays(["2026-11-16"], [
+      { date: "2026-11-16", meal: "lunch", type: "cook", name: "Best chili", import: { importId, status: "scraping" } },
+      { date: "2026-11-16", meal: "dinner", type: "cook", name: "Soup", import: { importId, status: "needs_review", recipeId } },
+    ]);
+    const lunch = screen.getByRole("region", { name: "Monday lunch" });
+    const dinner = screen.getByRole("region", { name: "Monday dinner" });
+    expect(within(lunch).getByText("Reading the recipe…")).toBeInTheDocument();
+    expect(within(dinner).getByRole("link", { name: "Review and save the recipe" })).toHaveAttribute("href", "/app/recipes/recipe-1");
+  });
+
+  it("offers the import result when an import failed", async () => {
+    const user = userEvent.setup();
+    const importId = "import-1" as Id<"recipeImports">;
+    renderDays(["2026-11-16"], [
+      { date: "2026-11-16", meal: "lunch", type: "cook", name: "Best chili", import: { importId, status: "failed" } },
+    ]);
+    const lunch = screen.getByRole("region", { name: "Monday lunch" });
+    expect(within(lunch).getByText("The recipe couldn’t be imported.")).toBeInTheDocument();
+    await user.click(within(lunch).getByRole("button", { name: "See why" }));
+    expect(await screen.findByRole("dialog", { name: "Recipe result" })).toBeInTheDocument();
   });
 
   it("keeps focus in the input when a cleared slot's name goes away", async () => {

@@ -22,7 +22,7 @@ import { WeekStrip } from "./week-strip";
 
 /** What typing does, matching the rules exactly (fixes the prototype's bug 2). */
 export const PLANNER_HINT =
-  "Type a meal and press Enter to go to the next one. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Press a selected type again to clear it.";
+  "Type a meal and press Enter to go to the next one. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Paste a recipe link to import it for review. Press a selected type again to clear it.";
 
 const PREVIOUS_WEEK_ID = "planner-previous-week";
 

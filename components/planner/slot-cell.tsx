@@ -3,6 +3,7 @@
 import { useMutation } from "convex/react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { ImportResultDialog } from "@/components/discovery/import-result-dialog";
 import { Input } from "@/components/ui/input";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -15,6 +16,7 @@ import {
   resolveLeftover,
   type SlotRef,
 } from "@/convex/lib/plannerSlots";
+import { announceRecipeImport } from "@/lib/recipe-import-events";
 import { cn } from "@/lib/utils";
 import { SLOT_TYPES, type SlotView } from "./types";
 
@@ -42,9 +44,11 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
   const commitText = useMutation(api.planner.commitText);
   const commitOther = useMutation(api.planner.commitOther);
   const setLeftoverOf = useMutation(api.planner.setLeftoverOf);
+  const importLink = useMutation(api.planner.importLink);
   const [pending, setPending] = useState(0);
   const [failed, setFailed] = useState(false);
-  const [linkNotice, setLinkNotice] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
+  const [resultImportId, setResultImportId] = useState<Id<"recipeImports"> | null>(null);
 
   const slot = slots.find((candidate) => candidate.date === date && candidate.meal === meal);
   const type = slot?.type ?? null;
@@ -85,12 +89,20 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
     }
   }
 
+  function showImport(importId: Id<"recipeImports">) {
+    setResultImportId(importId);
+    setResultOpen(true);
+  }
+
   function commitMain(text: string) {
     if (isRecipeLink(text)) {
-      setLinkNotice(true);
-      return Promise.resolve(false);
+      // The app's import flow: a preview the user reviews and saves (owner decision 15).
+      return run(async () => {
+        const importId = await importLink({ plannerId, date, meal, url: text.trim() });
+        announceRecipeImport(importId);
+        showImport(importId);
+      });
     }
-    setLinkNotice(false);
     return run(() => commitText({ plannerId, date, meal, text }));
   }
 
@@ -139,9 +151,11 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
         />
       )}
 
-      <SlotMeta slot={slot} pending={pending > 0} />
-      {linkNotice && <p className="planner-meta" role="status">Paste recipe links on Discover for now.</p>}
+      <SlotMeta slot={slot} pending={pending > 0} onShowImport={showImport} />
       {failed && <p className="planner-meta planner-error" role="alert">Couldn’t save this meal. Try again.</p>}
+      {resultImportId !== null && (
+        <ImportResultDialog importId={resultImportId} open={resultOpen} onOpenChange={setResultOpen} />
+      )}
     </section>
   );
 }
@@ -263,9 +277,32 @@ function LeftoversBody({
   );
 }
 
-function SlotMeta({ slot, pending }: { slot: SlotView | undefined; pending: boolean }) {
+function SlotMeta({
+  slot,
+  pending,
+  onShowImport,
+}: {
+  slot: SlotView | undefined;
+  pending: boolean;
+  onShowImport: (importId: Id<"recipeImports">) => void;
+}) {
   const recipe = slot?.type === "cook" ? slot.recipe : undefined;
   if (pending) return <p className="planner-meta">Saving…</p>;
+  if (slot?.import) {
+    const pendingImport = slot.import;
+    if (pendingImport.status === "failed") {
+      return (
+        <p className="planner-meta">
+          <span className="planner-warn">The recipe couldn’t be imported.</span>
+          <button type="button" className="planner-link-button" onClick={() => onShowImport(pendingImport.importId)}>See why</button>
+        </p>
+      );
+    }
+    if (pendingImport.recipeId) {
+      return <p className="planner-meta"><Link href={`/app/recipes/${pendingImport.recipeId}`}>Review and save the recipe</Link></p>;
+    }
+    return <p className="planner-meta">Reading the recipe…</p>;
+  }
   if (!slot || !recipe) return null;
   if (!recipe.available) {
     return <p className="planner-meta"><span className="planner-warn">Removed from your Recipe Book</span></p>;

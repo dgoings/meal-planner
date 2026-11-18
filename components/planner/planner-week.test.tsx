@@ -156,7 +156,7 @@ describe("PlannerWeek", () => {
     render(<PlannerWeek />);
     expect(
       screen.getByText(
-        "Type a meal and press Enter to go to the next one. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Press a selected type again to clear it.",
+        "Type a meal and press Enter to go to the next one. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Paste a recipe link to import it for review. Press a selected type again to clear it.",
       ),
     ).toBeInTheDocument();
   });

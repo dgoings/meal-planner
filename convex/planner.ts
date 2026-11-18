@@ -2,7 +2,15 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { cleanName, isRecipeLink, mealKey, parseSlotText, type Meal, type SlotType } from "./lib/plannerRules";
+import {
+  cleanName,
+  isRecipeLink,
+  mealKey,
+  nameFromRecipeLink,
+  parseSlotText,
+  type Meal,
+  type SlotType,
+} from "./lib/plannerRules";
 import {
   addDays,
   isDateKey,
@@ -12,6 +20,7 @@ import {
   type SlotRef,
 } from "./lib/plannerSlots";
 import {
+  importStatusValidator,
   leftoverFromValidator,
   mealValidator,
   slotRefValidator,
@@ -20,6 +29,7 @@ import {
 } from "./lib/plannerValidators";
 import { insertUserRecipe } from "./lib/userRecipes";
 import { canAccessRecipe } from "./recipes";
+import { queueRecipeSource, startRecipeIngestion, type StartIngestion } from "./recipeIngestion";
 
 const MAX_PEOPLE = 12;
 
@@ -110,7 +120,7 @@ export const updatePreferences = mutation({
 const RECIPE_SCAN_LIMIT = 500;
 
 type SlotValue =
-  | { type: "cook"; recipeId?: Id<"recipes"> }
+  | { type: "cook"; recipeId?: Id<"recipes">; importId?: Id<"recipeImports">; importName?: string }
   | { type: "out"; mealId?: Id<"plannerMeals"> }
   | { type: "left"; from: SlotRef | "other"; mealId?: Id<"plannerMeals"> }
   | { type: "skip" };
@@ -128,11 +138,32 @@ async function slotRow(ctx: QueryCtx | MutationCtx, plannerId: Id<"planners">, r
     .unique();
 }
 
+/**
+ * For a Cook slot holding a pasted link: the import, and the recipe it
+ * produced once the person who pasted it has saved it to their book.
+ */
+async function importedRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
+  if (row.type !== "cook" || row.recipeId !== undefined || row.importId === undefined) return null;
+  const recipeImport = await ctx.db.get(row.importId);
+  if (recipeImport === null) return null;
+  const recipeId = recipeImport.recipeId;
+  const saved =
+    recipeId === undefined
+      ? null
+      : await ctx.db
+          .query("savedRecipes")
+          .withIndex("by_user_and_recipe", (q) => q.eq("userId", row.updatedBy).eq("recipeId", recipeId))
+          .unique();
+  return { recipeImport, recipeId: saved === null ? undefined : recipeId };
+}
+
 /** The name a slot shows: its recipe's title or its planner meal's name. */
 async function slotName(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
   if (row.type === "cook") {
-    const recipe = row.recipeId === undefined ? null : await ctx.db.get(row.recipeId);
-    return recipe === null ? "" : cleanName(recipe.title);
+    const recipeId = row.recipeId ?? (await importedRecipe(ctx, row))?.recipeId;
+    const recipe = recipeId === undefined ? null : await ctx.db.get(recipeId);
+    if (recipe !== null) return cleanName(recipe.title);
+    return row.importName ?? "";
   }
   if (row.type === "out" || row.type === "left") {
     const meal = row.mealId === undefined ? null : await ctx.db.get(row.mealId);
@@ -384,6 +415,13 @@ export const slotViewValidator = v.object({
     v.object({ recipeId: v.id("recipes"), ingredientCount: v.number(), available: v.boolean() }),
   ),
   from: v.optional(v.union(slotRefValidator, v.literal("other"))),
+  import: v.optional(
+    v.object({
+      importId: v.id("recipeImports"),
+      status: importStatusValidator,
+      recipeId: v.optional(v.id("recipes")),
+    }),
+  ),
 });
 
 /**
@@ -406,8 +444,17 @@ export const week = query({
           name: slot.name,
           ...(slot.from === undefined ? {} : { from: slot.from }),
         };
-        if (row.type === "cook" && row.recipeId !== undefined) {
-          const recipe = await ctx.db.get(row.recipeId);
+        const imported = await importedRecipe(ctx, row);
+        if (imported !== null && imported.recipeId === undefined) {
+          view.import = {
+            importId: imported.recipeImport._id,
+            status: imported.recipeImport.status,
+            ...(imported.recipeImport.recipeId === undefined ? {} : { recipeId: imported.recipeImport.recipeId }),
+          };
+        }
+        const recipeId = row.type === "cook" ? (row.recipeId ?? imported?.recipeId) : undefined;
+        if (recipeId !== undefined) {
+          const recipe = await ctx.db.get(recipeId);
           const available =
             recipe !== null &&
             recipe.deletedAt === undefined &&
@@ -415,10 +462,10 @@ export const week = query({
           const ingredients = available
             ? await ctx.db
                 .query("recipeIngredients")
-                .withIndex("by_recipe", (q) => q.eq("recipeId", row.recipeId!))
+                .withIndex("by_recipe", (q) => q.eq("recipeId", recipeId))
                 .take(INGREDIENT_COUNT_LIMIT)
             : [];
-          view.recipe = { recipeId: row.recipeId, ingredientCount: ingredients.length, available };
+          view.recipe = { recipeId, ingredientCount: ingredients.length, available };
         }
         return view;
       }),
@@ -451,5 +498,41 @@ export const suggestions = query({
       .take(SUGGESTION_LIMIT);
     for (const meal of meals) if (!names.has(meal.key)) names.set(meal.key, meal.name);
     return [...names.values()].sort((first, second) => first.localeCompare(second));
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Pasting a recipe link
+
+/**
+ * Starts the app's existing import for `url` (preview, then an explicit
+ * save) and makes the slot a Cook slot waiting for that recipe.
+ */
+export async function startSlotImport(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  args: { plannerId: Id<"planners">; date: string; meal: Meal; url: string },
+  startIngestion: StartIngestion = startRecipeIngestion,
+): Promise<Id<"recipeImports">> {
+  const planner = await ctx.db.get(args.plannerId);
+  if (planner === null || !canAccessPlanner(userId, planner)) throw new Error("Planner was not found");
+  assertDate(args.date);
+  const url = args.url.trim();
+  if (!isRecipeLink(url)) throw new Error("Not a recipe link");
+  const { importId } = await queueRecipeSource(ctx, { userId, sourceUrl: url, sourceKind: "direct" }, startIngestion);
+  await writeSlot(ctx, args.plannerId, userId, { date: args.date, meal: args.meal }, {
+    type: "cook",
+    importId,
+    importName: nameFromRecipeLink(url),
+  });
+  return importId;
+}
+
+export const importLink = mutation({
+  args: { ...slotArgs, url: v.string() },
+  returns: v.id("recipeImports"),
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    return await startSlotImport(ctx, userId, args);
   },
 });
