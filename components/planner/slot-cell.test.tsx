@@ -4,6 +4,8 @@ import { getFunctionName } from "convex/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
 import { DayCard } from "./day-card";
+import type { PickerData } from "./picker-options";
+import { PlannerPickerProvider } from "./slot-combobox";
 import type { SlotView } from "./types";
 
 type Ref = Parameters<typeof getFunctionName>[0];
@@ -27,14 +29,18 @@ const mutation = (name: string) => {
   return mocks.mutations[`planner:${name}`];
 };
 
-function renderDays(dates: string[], slots: SlotView[] = []) {
+const NO_CHOICES: PickerData = { recipes: [], meals: [] };
+
+function renderDays(dates: string[], slots: SlotView[] = [], picker: PickerData = NO_CHOICES) {
   const requestFocus = (id: string) => document.getElementById(id)?.focus();
   return render(
-    <ul>
-      {dates.map((date) => (
-        <DayCard key={date} plannerId={plannerId} date={date} today={false} weekStart="2026-11-16" slots={slots} requestFocus={requestFocus} />
-      ))}
-    </ul>,
+    <PlannerPickerProvider value={picker}>
+      <ul>
+        {dates.map((date) => (
+          <DayCard key={date} plannerId={plannerId} date={date} today={false} weekStart="2026-11-16" slots={slots} requestFocus={requestFocus} />
+        ))}
+      </ul>
+    </PlannerPickerProvider>,
   );
 }
 
@@ -313,5 +319,141 @@ describe("SlotCell editing", () => {
     expect(input("Monday lunch")).toHaveFocus();
     expect(input("Monday lunch")).toHaveValue("");
     expect(input("Monday lunch")).toHaveAttribute("placeholder", "Plan lunch");
+  });
+
+  describe("the recipe picker", () => {
+    const chili = "recipe-chili" as Id<"recipes">;
+    const picker: PickerData = {
+      recipes: [
+        { recipeId: chili, title: "Chili", source: "Manual" },
+        { recipeId: "recipe-pep-1" as Id<"recipes">, title: "Shrimp Peperonata", source: "seriouseats.com", ingredientCount: 12 },
+        { recipeId: "recipe-pep-2" as Id<"recipes">, title: "Shrimp Peperonata", source: "Manual", ingredientCount: 0 },
+        { recipeId: "recipe-shrimp" as Id<"recipes">, title: "Shrimp", source: "Manual" },
+      ],
+      meals: ["Chipotle"],
+    };
+    const options = () => screen.queryAllByRole("option").map((option) => option.textContent);
+
+    it("filters as you type, tells same-named recipes apart and offers an explicit Create row", async () => {
+      const user = userEvent.setup();
+      renderDays(["2026-11-16"], [], picker);
+      const field = input("Monday lunch");
+      expect(field).toHaveAttribute("aria-expanded", "false");
+      await user.type(field, "p");
+      expect(field).toHaveAttribute("aria-expanded", "true");
+      expect(options()).toEqual([
+        "Shrimp PeperonataManual · 0 ingredients",
+        "Shrimp Peperonataseriouseats.com · 12 ingredients",
+        "Create recipe “p”",
+      ]);
+      await user.keyboard("{Escape}");
+      expect(field).toHaveAttribute("aria-expanded", "false");
+      expect(field).toHaveFocus();
+    });
+
+    it("picks the highlighted recipe with Enter and moves on, creating nothing", async () => {
+      const user = userEvent.setup();
+      mutation("attachRecipe").mockResolvedValue({ name: "Chili" });
+      renderDays(["2026-11-16"], [], picker);
+      await user.type(input("Monday lunch"), "chi");
+      await user.keyboard("{ArrowDown}");
+      expect(input("Monday lunch")).toHaveAttribute("aria-activedescendant", screen.getAllByRole("option")[0].id);
+      expect(screen.getAllByRole("option")[0]).toHaveAttribute("aria-selected", "true");
+      await user.keyboard("{Enter}");
+      expect(mutation("attachRecipe")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", recipeId: chili });
+      expect(mutation("commitText")).not.toHaveBeenCalled();
+      expect(mutation("createRecipeForSlot")).not.toHaveBeenCalled();
+      expect(input("Monday lunch")).toHaveValue("Chili");
+      expect(input("Monday dinner")).toHaveFocus();
+    });
+
+    it("keeps typed text as a plain name on Enter or leaving the field", async () => {
+      const user = userEvent.setup();
+      renderDays(["2026-11-16"], [], picker);
+      await user.type(input("Monday lunch"), "Shrimp Pepero ata{Enter}");
+      expect(mutation("commitText")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", text: "Shrimp Pepero ata" });
+      await user.type(input("Monday dinner"), "Chil");
+      await user.tab();
+      expect(mutation("commitText")).toHaveBeenLastCalledWith({ plannerId, date: "2026-11-16", meal: "dinner", text: "Chil" });
+      expect(mutation("attachRecipe")).not.toHaveBeenCalled();
+      expect(mutation("createRecipeForSlot")).not.toHaveBeenCalled();
+    });
+
+    it("creates a recipe only from the Create row, picked with a tap", async () => {
+      const user = userEvent.setup();
+      mutation("createRecipeForSlot").mockResolvedValue({ recipeId: "recipe-new", name: "Lentil soup" });
+      renderDays(["2026-11-16"], [], picker);
+      await user.type(input("Monday lunch"), "Lentil soup");
+      await user.click(screen.getByRole("option", { name: "Create recipe “Lentil soup”" }));
+      expect(mutation("createRecipeForSlot")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", name: "Lentil soup" });
+      expect(mutation("commitText")).not.toHaveBeenCalled();
+      expect(input("Monday lunch")).toHaveFocus();
+      expect(input("Monday lunch")).toHaveAttribute("aria-expanded", "false");
+    });
+
+    it("offers eat-out names in an Eat out slot", async () => {
+      const user = userEvent.setup();
+      renderDays(["2026-11-16"], [{ date: "2026-11-16", meal: "lunch", type: "out", name: "" }], picker);
+      await user.type(input("Monday lunch"), "chi");
+      expect(options()).toEqual(["Chipotle"]);
+      await user.click(screen.getByRole("option", { name: "Chipotle" }));
+      expect(mutation("commitText")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", text: "Chipotle" });
+    });
+
+    it("still turns typed text plus Eat out into one change while the list is open", async () => {
+      const user = userEvent.setup();
+      renderDays(["2026-11-16"], [], picker);
+      await user.type(input("Monday lunch"), "Chi");
+      expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
+      await user.click(within(screen.getByRole("region", { name: "Monday lunch" })).getByRole("button", { name: "Eat out" }));
+      expect(mutation("commitText")).not.toHaveBeenCalled();
+      expect(mutation("setType")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", type: "out", text: "Chi" });
+    });
+
+    it("says when a meal has no recipe and offers to choose or import one", async () => {
+      const user = userEvent.setup();
+      renderDays(["2026-11-16"], [{ date: "2026-11-16", meal: "lunch", type: "cook", name: "Chili" }], picker);
+      const lunch = screen.getByRole("region", { name: "Monday lunch" });
+      expect(within(lunch).getByText("No recipe attached")).toBeInTheDocument();
+
+      await user.click(within(lunch).getByRole("button", { name: "Choose recipe" }));
+      expect(input("Monday lunch")).toHaveFocus();
+      expect(options()[0]).toBe("ChiliManual");
+      expect(options()).toHaveLength(5);
+
+      mutation("importLink").mockResolvedValue("import-1");
+      await user.click(within(lunch).getByRole("button", { name: "Import from link" }));
+      const dialog = await screen.findByRole("dialog", { name: "Import a recipe for Chili" });
+      await user.type(within(dialog).getByLabelText("Recipe link"), "https://example.com/chili");
+      await user.click(within(dialog).getByRole("button", { name: "Import recipe" }));
+      expect(mutation("importLink")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", url: "https://example.com/chili" });
+      expect(await screen.findByRole("dialog", { name: "Recipe result" })).toBeInTheDocument();
+    });
+
+    it("explains a missing AI key when importing from a link", async () => {
+      const user = userEvent.setup();
+      const { ConvexError } = await import("convex/values");
+      mutation("importLink").mockRejectedValue(new ConvexError({ code: "ai_key_missing" }));
+      renderDays(["2026-11-16"], [{ date: "2026-11-16", meal: "lunch", type: "cook", name: "Chili" }], picker);
+      await user.click(screen.getByRole("button", { name: "Import from link" }));
+      const dialog = await screen.findByRole("dialog", { name: "Import a recipe for Chili" });
+      await user.type(within(dialog).getByLabelText("Recipe link"), "https://example.com/chili");
+      await user.click(within(dialog).getByRole("button", { name: "Import recipe" }));
+      expect(within(dialog).getByRole("alert")).toHaveTextContent("Add an AI key to import recipes");
+      expect(within(dialog).getByRole("link", { name: "Go to Settings" })).toHaveAttribute("href", "/app/settings#ai-provider");
+    });
+
+    it("lets a slot with a recipe change which recipe it uses", async () => {
+      const user = userEvent.setup();
+      renderDays(["2026-11-16"], [{
+        date: "2026-11-16", meal: "lunch", type: "cook", name: "Chili",
+        recipe: { recipeId: chili, title: "Chili", ingredientCount: 3, available: true },
+      }], picker);
+      const lunch = screen.getByRole("region", { name: "Monday lunch" });
+      expect(within(lunch).queryByText("No recipe attached")).toBeNull();
+      await user.click(within(lunch).getByRole("button", { name: "Change the recipe for Chili" }));
+      expect(input("Monday lunch")).toHaveFocus();
+      expect(options()).toContain("ShrimpManual");
+    });
   });
 });

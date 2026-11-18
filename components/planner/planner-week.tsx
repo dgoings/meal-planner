@@ -18,13 +18,15 @@ import {
 } from "@/convex/lib/plannerSlots";
 import { DayCard, dayCardId } from "./day-card";
 import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
+import { PlannerPickerProvider } from "./slot-combobox";
 import { WeekStrip } from "./week-strip";
 
 /** What typing does, matching the rules exactly (fixes the prototype's bug 2). */
 export const PLANNER_HINT =
-  "Type a meal and press Enter to go to the next one. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Paste a recipe link to import it for review. Press a selected type again to clear it.";
+  "Type a meal and press Enter to go to the next one. Pick a recipe from the list to attach it, or keep just the name and attach a recipe later. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Paste a recipe link to import it for review. Press a selected type again to clear it.";
 
 const PREVIOUS_WEEK_ID = "planner-previous-week";
+const NO_CHOICES = { recipes: [], meals: [] };
 
 /** Today's local date, refreshed every minute and when the page comes back into view. */
 function useToday() {
@@ -83,7 +85,7 @@ export function PlannerWeek() {
   const start = weekStartOf(requested !== null && isDateKey(requested) ? requested : today, weekStartPreference);
   const currentStart = weekStartOf(today, weekStartPreference);
   const week = useQuery(api.planner.week, planner ? { plannerId: planner.plannerId, start } : "skip");
-  const suggestions = useQuery(api.planner.suggestions, planner ? { plannerId: planner.plannerId } : "skip");
+  const picker = useQuery(api.planner.pickerOptions, planner ? { plannerId: planner.plannerId } : "skip");
 
   // A control to focus once it exists: a slot's type can change its main
   // control, which appears only after the week query updates (§2.3).
@@ -173,7 +175,7 @@ export function PlannerWeek() {
           {[0, 1, 2].map((item) => <Skeleton className="h-40" key={item} />)}
         </div>
       ) : (
-        <>
+        <PlannerPickerProvider value={picker ?? NO_CHOICES}>
           <WeekStrip slots={week.slots} start={start} />
           <ul className="planner-days" aria-label={`Meals for ${formatWeekRange(start)}`}>
             {weekDates(start).map((date) => (
@@ -189,10 +191,7 @@ export function PlannerWeek() {
             ))}
           </ul>
           <p className="planner-hint">{PLANNER_HINT}</p>
-          <datalist id="planner-suggestions">
-            {(suggestions ?? []).map((name) => <option key={name} value={name} />)}
-          </datalist>
-        </>
+        </PlannerPickerProvider>
       )}
 
       {planner && (

@@ -33,7 +33,7 @@ describe("PlannerWeek", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 10, 18, 9, 0));
-    mocks.queries = { "planner:mine": planner, "planner:week": { slots: [] }, "planner:suggestions": [] };
+    mocks.queries = { "planner:mine": planner, "planner:week": { slots: [] }, "planner:pickerOptions": { recipes: [], meals: [] } };
     mocks.mutations = {};
     mocks.search = "";
     mocks.replace.mockReset();
@@ -192,18 +192,26 @@ describe("PlannerWeek", () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
-  it("offers autocomplete from the planner's suggestions", () => {
-    mocks.queries["planner:suggestions"] = ["Chili", "Thai"];
+  it("offers the Recipe Book in each slot's own list, not a browser datalist", async () => {
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    mocks.search = "week=2026-11-16";
+    mocks.queries["planner:pickerOptions"] = {
+      recipes: [{ recipeId: "recipe-1", title: "Chili", source: "Manual" }, { recipeId: "recipe-2", title: "Shrimp", source: "Manual" }],
+      meals: ["Thai"],
+    };
     const { container } = render(<PlannerWeek />);
-    const options = [...container.querySelectorAll("datalist#planner-suggestions option")].map((option) => option.getAttribute("value"));
-    expect(options).toEqual(["Chili", "Thai"]);
+    expect(container.querySelector("datalist")).toBeNull();
+    await user.type(screen.getByRole("combobox", { name: "Monday lunch" }), "ch");
+    const list = screen.getByRole("listbox", { name: "Choices for Monday lunch" });
+    expect([...list.querySelectorAll("[role=option]")].map((option) => option.textContent)).toEqual(["ChiliManual", "Create recipe “ch”"]);
   });
 
   it("explains exactly what typing does", () => {
     render(<PlannerWeek />);
     expect(
       screen.getByText(
-        "Type a meal and press Enter to go to the next one. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Paste a recipe link to import it for review. Press a selected type again to clear it.",
+        "Type a meal and press Enter to go to the next one. Pick a recipe from the list to attach it, or keep just the name and attach a recipe later. Type just “skip” or “leftovers”, or start with “out” (like “out at Chipotle”), to set the type. Paste a recipe link to import it for review. Press a selected type again to clear it.",
       ),
     ).toBeInTheDocument();
   });

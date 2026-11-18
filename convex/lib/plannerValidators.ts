@@ -36,6 +36,9 @@ export const planSlotValidator = v.union(
     ...slotBase,
     type: v.literal("cook"),
     recipeId: v.optional(v.id("recipes")),
+    // A typed name with no recipe attached. Typing never creates a recipe;
+    // the user attaches, creates or imports one deliberately.
+    name: v.optional(v.string()),
     // A recipe link pasted into the slot: the import the user reviews and
     // saves in the app's import flow, and a name to show until then.
     importId: v.optional(v.id("recipeImports")),

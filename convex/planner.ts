@@ -120,7 +120,7 @@ export const updatePreferences = mutation({
 const RECIPE_SCAN_LIMIT = 500;
 
 type SlotValue =
-  | { type: "cook"; recipeId?: Id<"recipes">; importId?: Id<"recipeImports">; importName?: string }
+  | { type: "cook"; recipeId?: Id<"recipes">; name?: string; importId?: Id<"recipeImports">; importName?: string }
   | { type: "out"; mealId?: Id<"plannerMeals"> }
   | { type: "left"; from: SlotRef | "other"; mealId?: Id<"plannerMeals"> }
   | { type: "skip" };
@@ -181,7 +181,7 @@ async function slotName(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">, cook
   if (row.type === "cook") {
     const { recipeId, recipe, usable } = cook ?? (await cookRecipe(ctx, row));
     if (usable && recipe !== null) return cleanName(recipe.title);
-    return recipeId === undefined ? (row.importName ?? "") : "";
+    return recipeId === undefined ? (row.importName ?? row.name ?? "") : "";
   }
   if (row.type === "out" || row.type === "left") {
     const meal = row.mealId === undefined ? null : await ctx.db.get(row.mealId);
@@ -245,25 +245,26 @@ async function writeSlot(
   else await ctx.db.replace(existing._id, document);
 }
 
-/**
- * The user's newest saved recipe whose title has the same meal key as
- * `name`, or a new bare recipe in their book.
- */
-async function resolveRecipe(ctx: MutationCtx, userId: Id<"users">, name: string) {
-  const key = mealKey(name);
+/** The user's saved, live recipes, newest saved first (at most RECIPE_SCAN_LIMIT). */
+async function savedRecipes(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
   const saved = await ctx.db
     .query("savedRecipes")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .order("desc")
     .take(RECIPE_SCAN_LIMIT);
-  for (const item of saved) {
-    const recipe = await ctx.db.get(item.recipeId);
-    if (recipe !== null && recipe.deletedAt === undefined && mealKey(recipe.title) === key) {
-      return { recipeId: recipe._id, name: cleanName(recipe.title) };
-    }
-  }
-  const recipeId = await insertUserRecipe(ctx, userId, { title: name, ingredients: [], instructions: [] });
-  return { recipeId, name };
+  const recipes = await Promise.all(saved.map((item) => ctx.db.get(item.recipeId)));
+  return recipes.filter((recipe): recipe is Doc<"recipes"> => recipe !== null && recipe.deletedAt === undefined);
+}
+
+/**
+ * The one saved recipe whose title has the same meal key as `name`, or null
+ * when there is none or more than one. Typing never creates a recipe, and an
+ * ambiguous name stays a plain name until the user picks one.
+ */
+async function uniqueRecipeNamed(ctx: MutationCtx, userId: Id<"users">, name: string) {
+  const key = mealKey(name);
+  const matches = (await savedRecipes(ctx, userId)).filter((recipe) => mealKey(recipe.title) === key);
+  return matches.length === 1 ? { recipeId: matches[0]._id, name: cleanName(matches[0].title) } : null;
 }
 
 /** The planner's eat-out or leftovers meal with the same key, or a new one. */
@@ -320,7 +321,11 @@ async function planSlot(
       await writeSlot(ctx, plannerId, userId, ref, { type: "cook" });
       return { type, name: "" };
     }
-    const recipe = await resolveRecipe(ctx, userId, name);
+    const recipe = await uniqueRecipeNamed(ctx, userId, name);
+    if (recipe === null) {
+      await writeSlot(ctx, plannerId, userId, ref, { type: "cook", name });
+      return { type, name };
+    }
     await writeSlot(ctx, plannerId, userId, ref, { type: "cook", recipeId: recipe.recipeId });
     return { type, name: recipe.name };
   }
@@ -380,11 +385,49 @@ export const commitText = mutation({
     if (row !== null && (row.type === "left" || row.type === "skip")) {
       throw new Error("This slot has no text");
     }
-    const currentName = row === null ? "" : await slotName(ctx, row);
+    const cook = row?.type === "cook" ? await cookRecipe(ctx, row) : null;
+    const currentName = row === null ? "" : await slotName(ctx, row, cook ?? undefined);
     if (row !== null && currentName === cleanName(text)) return { type: row.type, name: currentName };
+    // Retyping an attached recipe's name in another case or punctuation keeps
+    // that recipe, even when another saved recipe has the same name.
+    if (cook?.usable && cook.recipe !== null && cleanName(text) && mealKey(cook.recipe.title) === mealKey(text)) {
+      return { type: "cook" as const, name: currentName };
+    }
     const intent = parseSlotText(text, row?.type ?? null);
     if (intent.kind !== "set") return { type: row?.type ?? null, name: currentName };
     return await planSlot(ctx, plannerId, userId, ref, intent.type, intent.name);
+  },
+});
+
+/** The picker's choice of a saved recipe for a slot; the slot becomes Cook. */
+export const attachRecipe = mutation({
+  args: { ...slotArgs, recipeId: v.id("recipes") },
+  returns: v.object({ name: v.string() }),
+  handler: async (ctx, { plannerId, date, meal, recipeId }) => {
+    const { userId } = await requirePlanner(ctx, plannerId);
+    assertDate(date);
+    const recipe = await ctx.db.get(recipeId);
+    if (recipe === null || recipe.deletedAt !== undefined || !(await canAccessRecipe(ctx, userId, recipe))) {
+      throw new Error("Recipe was not found");
+    }
+    await writeSlot(ctx, plannerId, userId, { date, meal }, { type: "cook", recipeId });
+    return { name: cleanName(recipe.title) };
+  },
+});
+
+/** The picker's explicit Create recipe row: a bare recipe in the Recipe Book, attached. */
+export const createRecipeForSlot = mutation({
+  args: { ...slotArgs, name: v.string() },
+  returns: v.object({ recipeId: v.id("recipes"), name: v.string() }),
+  handler: async (ctx, { plannerId, date, meal, name: text }) => {
+    const { userId } = await requirePlanner(ctx, plannerId);
+    assertDate(date);
+    if (isRecipeLink(text)) throw new Error("Paste recipe links with importLink");
+    const name = cleanName(text);
+    if (!name) throw new Error("A recipe needs a name");
+    const recipeId = await insertUserRecipe(ctx, userId, { title: name, ingredients: [], instructions: [] });
+    await writeSlot(ctx, plannerId, userId, { date, meal }, { type: "cook", recipeId });
+    return { recipeId, name };
   },
 });
 
@@ -526,30 +569,60 @@ export const week = query({
   },
 });
 
-/** Autocomplete: saved recipe titles and the planner's meal names, once each. */
-export const suggestions = query({
+export const pickerRecipeValidator = v.object({
+  recipeId: v.id("recipes"),
+  title: v.string(),
+  /** The source site, or "Manual" for a recipe typed in by hand. */
+  source: v.string(),
+  /** Only for recipes whose name another saved recipe shares, to tell them apart. */
+  ingredientCount: v.optional(v.number()),
+  moreIngredients: v.optional(v.literal(true)),
+});
+
+function recipeSource(recipe: Doc<"recipes">) {
+  if (!recipe.sourceUrl) return "Manual";
+  if (recipe.sourceSite) return recipe.sourceSite;
+  try {
+    return new URL(recipe.sourceUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return "Web";
+  }
+}
+
+/** The slot picker's choices: saved recipes and the planner's meal names. */
+export const pickerOptions = query({
   args: { plannerId: v.id("planners") },
-  returns: v.array(v.string()),
+  returns: v.object({ recipes: v.array(pickerRecipeValidator), meals: v.array(v.string()) }),
   handler: async (ctx, { plannerId }) => {
     const { userId } = await requirePlanner(ctx, plannerId);
-    const names = new Map<string, string>();
-    const saved = await ctx.db
-      .query("savedRecipes")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .order("desc")
-      .take(SUGGESTION_LIMIT);
-    for (const item of saved) {
-      const recipe = await ctx.db.get(item.recipeId);
-      if (recipe === null || recipe.deletedAt !== undefined) continue;
-      const name = cleanName(recipe.title);
-      if (!names.has(mealKey(name))) names.set(mealKey(name), name);
+    const recipes = await savedRecipes(ctx, userId);
+    const keyCounts = new Map<string, number>();
+    for (const recipe of recipes) {
+      const key = mealKey(recipe.title);
+      keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
     }
+    const options = await Promise.all(
+      recipes.map(async (recipe) => {
+        const option: typeof pickerRecipeValidator.type = {
+          recipeId: recipe._id,
+          title: cleanName(recipe.title),
+          source: recipeSource(recipe),
+        };
+        if ((keyCounts.get(mealKey(recipe.title)) ?? 0) < 2) return option;
+        const ingredients = await ctx.db
+          .query("recipeIngredients")
+          .withIndex("by_recipe", (q) => q.eq("recipeId", recipe._id))
+          .take(INGREDIENT_COUNT_LIMIT + 1);
+        option.ingredientCount = Math.min(ingredients.length, INGREDIENT_COUNT_LIMIT);
+        if (ingredients.length > INGREDIENT_COUNT_LIMIT) option.moreIngredients = true;
+        return option;
+      }),
+    );
     const meals = await ctx.db
       .query("plannerMeals")
       .withIndex("by_planner_and_key", (q) => q.eq("plannerId", plannerId))
       .take(SUGGESTION_LIMIT);
-    for (const meal of meals) if (!names.has(meal.key)) names.set(meal.key, meal.name);
-    return [...names.values()].sort((first, second) => first.localeCompare(second));
+    return { recipes: options, meals: meals.map((meal) => meal.name) };
   },
 });
 
@@ -571,11 +644,15 @@ export async function startSlotImport(
   assertDate(args.date);
   const url = args.url.trim();
   if (!isRecipeLink(url)) throw new Error("Not a recipe link");
+  const ref = { date: args.date, meal: args.meal };
   const { importId } = await queueRecipeSource(ctx, { userId, sourceUrl: url, sourceKind: "direct", whenAiUnavailable: "throw" }, startIngestion);
-  await writeSlot(ctx, args.plannerId, userId, { date: args.date, meal: args.meal }, {
+  // A slot holding a typed name keeps it until the imported recipe is saved.
+  const row = await slotRow(ctx, args.plannerId, ref);
+  const typedName = row?.type === "cook" && row.recipeId === undefined ? row.name : undefined;
+  await writeSlot(ctx, args.plannerId, userId, ref, {
     type: "cook",
     importId,
-    importName: nameFromRecipeLink(url),
+    importName: typedName ?? nameFromRecipeLink(url),
   });
   return importId;
 }
