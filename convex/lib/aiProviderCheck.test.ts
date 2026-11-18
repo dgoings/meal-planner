@@ -89,4 +89,21 @@ describe("checkProviderKey", () => {
     const offline = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("fetch failed"));
     expect(await codeOf(anthropic, offline)).toBe("ai_provider_unreachable");
   });
+
+  it("never follows a redirect with the key attached", async () => {
+    const redirected = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, { status: 302, headers: { Location: "https://elsewhere.test/" } }),
+    );
+    expect(await codeOf(openrouter, redirected)).toBe("ai_provider_unreachable");
+    expect(redirected).toHaveBeenCalledOnce();
+
+    const fetchMock = respond({ status: 200, body: { data: [] } });
+    await codeOf(anthropic, fetchMock);
+    expect(fetchMock.mock.calls[0][1]?.redirect).toBe("error");
+
+    // What fetch does with `redirect: "error"` when a redirect arrives.
+    const refused = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("unexpected redirect"));
+    expect(await codeOf(openai, refused)).toBe("ai_provider_unreachable");
+    expect(refused).toHaveBeenCalledOnce();
+  });
 });

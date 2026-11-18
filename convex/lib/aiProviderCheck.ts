@@ -10,7 +10,12 @@ type OpenRouterModels = {
 async function request(fetchImpl: typeof fetch, url: string, headers: Record<string, string>) {
   let response: Response;
   try {
-    response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    // A redirect would carry the key header to another host, so refuse it.
+    response = await fetchImpl(url, {
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
   } catch {
     throw new AiSettingsError("ai_provider_unreachable");
   }
