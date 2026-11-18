@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   cleanName,
   isRecipeLink,
+  MEAL_LABELS,
   mealKey,
+  MEALS,
   nameFromRecipeLink,
+  normalizeMeals,
   parseSlotText,
+  plannedMeals,
 } from "./plannerRules";
 
 describe("cleanName", () => {
@@ -80,5 +84,24 @@ describe("parseSlotText in a typed slot", () => {
     expect(parseSlotText("skip", "cook")).toEqual({ kind: "set", type: "cook", name: "skip" });
     expect(parseSlotText("out at X", "out")).toEqual({ kind: "set", type: "out", name: "out at X" });
     expect(parseSlotText("", "cook")).toEqual({ kind: "set", type: "cook", name: "" });
+  });
+});
+
+describe("meals", () => {
+  it("orders breakfast, lunch, dinner and labels them", () => {
+    expect(MEALS).toEqual(["breakfast", "lunch", "dinner"]);
+    expect(MEALS.map((meal) => MEAL_LABELS[meal])).toEqual(["Breakfast", "Lunch", "Dinner"]);
+  });
+
+  it("puts chosen meals in day order without repeats, and refuses none", () => {
+    expect(normalizeMeals(["dinner", "breakfast", "dinner"])).toEqual(["breakfast", "dinner"]);
+    expect(normalizeMeals(["lunch"])).toEqual(["lunch"]);
+    expect(() => normalizeMeals([])).toThrow(/at least one meal/);
+  });
+
+  it("plans every meal when nothing was chosen yet", () => {
+    expect(plannedMeals(undefined)).toEqual(["breakfast", "lunch", "dinner"]);
+    expect(plannedMeals(["dinner", "lunch"])).toEqual(["lunch", "dinner"]);
+    expect(plannedMeals([])).toEqual(["breakfast", "lunch", "dinner"]);
   });
 });

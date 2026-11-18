@@ -198,7 +198,8 @@ export const continueAccountDeletion = internalMutation({
       const meals = slots.length > 0
         ? []
         : await ctx.db.query("plannerMeals").withIndex("by_planner_and_key", (q) => q.eq("plannerId", planner._id)).take(50);
-      await Promise.all([...slots, ...meals].map((document) => ctx.db.delete(document._id)));
+      const undo = await ctx.db.query("plannerUndo").withIndex("by_planner", (q) => q.eq("plannerId", planner._id)).take(10);
+      await Promise.all([...slots, ...meals, ...undo].map((document) => ctx.db.delete(document._id)));
       if (slots.length === 0 && meals.length === 0) await ctx.db.delete(planner._id);
       await schedule();
       return null;

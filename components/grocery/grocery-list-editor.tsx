@@ -12,6 +12,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { groceryCategoryOrder } from "@/convex/lib/groceryCategory";
 import type { GroceryItem } from "@/lib/data/types";
+import { UnsavedChangesBar, UnsavedNotice, useIsPhone } from "./unsaved-changes-bar";
 
 function sameItem(first: GroceryItem, second: GroceryItem) {
   return (
@@ -59,6 +60,7 @@ export function GroceryListEditor({
     "idle" | "saving" | "saved" | "error"
   >(initialSaveState);
   const [requestId] = useState(() => crypto.randomUUID());
+  const isPhone = useIsPhone();
   const persistedItemIds = useMemo(
     () => new Set(listId === undefined ? [] : serverItems.map((item) => item.id)),
     [listId, serverItems],
@@ -213,8 +215,16 @@ export function GroceryListEditor({
     }
   }
 
+  const saveDisabled =
+    saveState === "saving" ||
+    listName.trim().length === 0 ||
+    (!dirty && !needsInitialSave);
+  const saveLabel =
+    saveState === "saving" ? "Saving…" : needsInitialSave ? "Save list" : "Update list";
+  const showBar = isPhone && canSave && dirty && saveState !== "saved";
+
   return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
+    <div className={`grid gap-6 xl:grid-cols-[1fr_320px]${showBar ? " has-unsaved-bar" : ""}`}>
       <div className="stack">
         <Card>
           <CardContent className="grocery-head stack">
@@ -329,21 +339,9 @@ export function GroceryListEditor({
               />
             </div>
             {canSave && (
-              <Button
-                className="mt-5 w-full"
-                onClick={persistList}
-                disabled={
-                  saveState === "saving" ||
-                  listName.trim().length === 0 ||
-                  (!dirty && !needsInitialSave)
-                }
-              >
+              <Button className="mt-5 w-full" onClick={persistList} disabled={saveDisabled}>
                 <Save size={17} />
-                {saveState === "saving"
-                  ? "Saving…"
-                  : needsInitialSave
-                    ? "Save list"
-                    : "Update list"}
+                {saveLabel}
               </Button>
             )}
             {saveState === "saved" && (
@@ -352,9 +350,7 @@ export function GroceryListEditor({
               </p>
             )}
             {dirty && saveState === "idle" && (
-              <p className="mt-3 text-sm text-muted-foreground" role="status">
-                You have unsaved changes.
-              </p>
+              <UnsavedNotice className="mt-3" role="status" />
             )}
             {checkError && (
               <p className="mt-3 text-sm font-bold text-red-700" role="alert">
@@ -392,6 +388,14 @@ export function GroceryListEditor({
           </div>
         )}
       </aside>
+      {showBar && (
+        <UnsavedChangesBar>
+          <Button onClick={persistList} disabled={saveDisabled}>
+            <Save size={17} />
+            {saveLabel}
+          </Button>
+        </UnsavedChangesBar>
+      )}
     </div>
   );
 }

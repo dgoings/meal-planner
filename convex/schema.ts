@@ -1,7 +1,8 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { notIncludedValidator, planSlotValidator, weekStartValidator } from "./lib/plannerValidators";
+import { mealValidator, notIncludedValidator, planSlotValidator, weekStartValidator } from "./lib/plannerValidators";
 import { aiErrorCodeValidator, aiProviderValidator } from "./lib/aiValidators";
+import { plannerUndoFields } from "./lib/slotHistory";
 
 const importStatus = v.union(
   v.literal("queued"),
@@ -360,6 +361,9 @@ export default defineSchema({
     ownerId: v.id("users"),
     weekStart: weekStartValidator,
     people: v.number(),
+    // "Meals to plan"; unset means every meal. Slots of a meal turned off are
+    // kept and hidden, so they come back when it is turned on again.
+    meals: v.optional(v.array(mealValidator)),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_owner", ["ownerId"]),
@@ -382,6 +386,10 @@ export default defineSchema({
     "date",
     "meal",
   ]),
+
+  // The planner's last slot change, kept so it can be undone (one level).
+  // At most one row per planner; see `convex/lib/slotHistory.ts`.
+  plannerUndo: defineTable(plannerUndoFields).index("by_planner", ["plannerId"]),
 
   recipeSearchCache: defineTable({
     normalizedQuery: v.string(),

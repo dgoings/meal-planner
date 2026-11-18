@@ -11,14 +11,17 @@ import {
   addDays,
   formatWeekRange,
   isDateKey,
-  localDateKey,
   weekDates,
   weekStartOf,
+  weekSummary,
   type WeekStart,
 } from "@/convex/lib/plannerSlots";
+import { CopyWeekButton } from "./copy-week-dialog";
 import { DayCard, dayCardId } from "./day-card";
 import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
+import { PlannerUndoProvider } from "./planner-undo";
 import { PlannerPickerProvider } from "./slot-combobox";
+import { useToday } from "./use-today";
 import { WeekGroceryList } from "./week-grocery-list";
 import { WeekStrip } from "./week-strip";
 
@@ -28,23 +31,6 @@ export const PLANNER_HINT =
 
 const PREVIOUS_WEEK_ID = "planner-previous-week";
 const NO_CHOICES = { recipes: [], meals: [] };
-
-/** Today's local date, refreshed every minute and when the page comes back into view. */
-function useToday() {
-  const [today, setToday] = useState(() => localDateKey(new Date()));
-  useEffect(() => {
-    const refresh = () => setToday(localDateKey(new Date()));
-    const timer = window.setInterval(refresh, 60_000);
-    document.addEventListener("visibilitychange", refresh);
-    window.addEventListener("focus", refresh);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", refresh);
-      window.removeEventListener("focus", refresh);
-    };
-  }, []);
-  return today;
-}
 
 /**
  * Keeps `--planner-toolbar-height` on the planner at the sticky toolbar's
@@ -63,7 +49,17 @@ function measureToolbar(toolbar: HTMLDivElement | null) {
   return () => observer.disconnect();
 }
 
+/** The planner, with Undo for its slot changes around everything that makes them. */
 export function PlannerWeek() {
+  const planner = useQuery(api.planner.mine, {});
+  return (
+    <PlannerUndoProvider plannerId={planner?.plannerId}>
+      <PlannerWeekView />
+    </PlannerUndoProvider>
+  );
+}
+
+function PlannerWeekView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const today = useToday();
@@ -163,10 +159,18 @@ export function PlannerWeek() {
             </Button>
           )}
         </div>
-        <Button variant="ghost" size="sm" disabled={!planner} onClick={() => setSettingsOpen(true)}>
-          <Settings2 size={17} aria-hidden="true" />
-          Planner settings
-        </Button>
+        <div className="planner-toolbar-actions">
+          <CopyWeekButton
+            plannerId={planner?.plannerId}
+            start={start}
+            planned={week ? weekSummary(week.slots, start).planned : 0}
+            disabled={!week}
+          />
+          <Button variant="ghost" size="sm" disabled={!planner} onClick={() => setSettingsOpen(true)}>
+            <Settings2 size={17} aria-hidden="true" />
+            Planner settings
+          </Button>
+        </div>
       </div>
 
       {planner === undefined || planner === null || week === undefined ? (
@@ -177,7 +181,7 @@ export function PlannerWeek() {
         </div>
       ) : (
         <PlannerPickerProvider value={picker ?? NO_CHOICES}>
-          <WeekStrip slots={week.slots} start={start} />
+          <WeekStrip slots={week.slots} start={start} meals={planner.meals} />
           <WeekGroceryList plannerId={planner.plannerId} start={start} />
           <ul className="planner-days" aria-label={`Meals for ${formatWeekRange(start)}`}>
             {weekDates(start).map((date) => (
@@ -189,6 +193,7 @@ export function PlannerWeek() {
                 weekStart={start}
                 slots={week.slots}
                 requestFocus={requestFocus}
+                meals={planner.meals}
               />
             ))}
           </ul>
@@ -203,6 +208,7 @@ export function PlannerWeek() {
           plannerId={planner.plannerId}
           weekStart={planner.weekStart}
           people={planner.people}
+          meals={planner.meals}
           onWeekStartChange={(next) => showWeek(weekStartOf(start, next))}
         />
       )}

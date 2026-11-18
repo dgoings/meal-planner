@@ -6,8 +6,11 @@ import {
   cleanName,
   isRecipeLink,
   mealKey,
+  MEALS,
   nameFromRecipeLink,
+  normalizeMeals,
   parseSlotText,
+  plannedMeals,
   type Meal,
   type SlotType,
 } from "./lib/plannerRules";
@@ -15,6 +18,7 @@ import {
   addDays,
   isDateKey,
   leftoverChoices,
+  resolveLeftover,
   slotOrder,
   type SlotLike,
   type SlotRef,
@@ -27,6 +31,7 @@ import {
   slotTypeValidator,
   weekStartValidator,
 } from "./lib/plannerValidators";
+import { noteCreatedRecipe, rememberSlot } from "./lib/slotHistory";
 import { insertUserRecipe } from "./lib/userRecipes";
 import { canAccessRecipe } from "./recipes";
 import { queueRecipeSource, startRecipeIngestion, type StartIngestion } from "./recipeIngestion";
@@ -59,20 +64,35 @@ export function normalizePeople(value: number) {
   return Math.min(MAX_PEOPLE, Math.max(1, Math.round(value)));
 }
 
+async function ownPlanner(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
+  return await ctx.db
+    .query("planners")
+    .withIndex("by_owner", (q) => q.eq("ownerId", userId))
+    .first();
+}
+
 export const mine = query({
   args: {},
   returns: v.union(
     v.null(),
-    v.object({ plannerId: v.id("planners"), weekStart: weekStartValidator, people: v.number() }),
+    v.object({
+      plannerId: v.id("planners"),
+      weekStart: weekStartValidator,
+      people: v.number(),
+      /** The meals to plan, in day order. */
+      meals: v.array(mealValidator),
+    }),
   ),
   handler: async (ctx) => {
     const userId = await requireUser(ctx);
-    const planner = await ctx.db
-      .query("planners")
-      .withIndex("by_owner", (q) => q.eq("ownerId", userId))
-      .first();
+    const planner = await ownPlanner(ctx, userId);
     if (planner === null) return null;
-    return { plannerId: planner._id, weekStart: planner.weekStart, people: planner.people };
+    return {
+      plannerId: planner._id,
+      weekStart: planner.weekStart,
+      people: planner.people,
+      meals: plannedMeals(planner.meals),
+    };
   },
 });
 
@@ -81,10 +101,7 @@ export const ensure = mutation({
   returns: v.id("planners"),
   handler: async (ctx) => {
     const userId = await requireUser(ctx);
-    const existing = await ctx.db
-      .query("planners")
-      .withIndex("by_owner", (q) => q.eq("ownerId", userId))
-      .first();
+    const existing = await ownPlanner(ctx, userId);
     if (existing !== null) return existing._id;
     const now = Date.now();
     return await ctx.db.insert("planners", {
@@ -102,13 +119,16 @@ export const updatePreferences = mutation({
     plannerId: v.id("planners"),
     weekStart: v.optional(weekStartValidator),
     people: v.optional(v.number()),
+    /** Meals to plan; at least one. */
+    meals: v.optional(v.array(mealValidator)),
   },
   returns: v.null(),
-  handler: async (ctx, { plannerId, weekStart, people }) => {
+  handler: async (ctx, { plannerId, weekStart, people, meals }) => {
     await requirePlanner(ctx, plannerId);
     const patch: Partial<Doc<"planners">> = { updatedAt: Date.now() };
     if (weekStart !== undefined) patch.weekStart = weekStart;
     if (people !== undefined) patch.people = normalizePeople(people);
+    if (meals !== undefined) patch.meals = normalizeMeals(meals);
     await ctx.db.patch(plannerId, patch);
     return null;
   },
@@ -119,7 +139,7 @@ export const updatePreferences = mutation({
 
 const RECIPE_SCAN_LIMIT = 500;
 
-type SlotValue =
+export type SlotValue =
   | { type: "cook"; recipeId?: Id<"recipes">; name?: string; importId?: Id<"recipeImports">; importName?: string }
   | { type: "out"; mealId?: Id<"plannerMeals"> }
   | { type: "left"; from: SlotRef | "other"; mealId?: Id<"plannerMeals"> }
@@ -162,7 +182,7 @@ async function importedRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">
  * owner can no longer open it; the slot then behaves as unlinked: no name, so
  * it is no leftovers source and retyping the title links a recipe again.
  */
-async function cookRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
+export async function cookRecipe(ctx: QueryCtx | MutationCtx, row: Doc<"planSlots">) {
   const imported = await importedRecipe(ctx, row);
   const recipeId = row.type === "cook" ? (row.recipeId ?? imported?.recipeId) : undefined;
   const recipe = recipeId === undefined ? null : await ctx.db.get(recipeId);
@@ -204,20 +224,26 @@ export async function toSlotLike(
   };
 }
 
-/** Rows from `from` to `to` inclusive, as the slot rules see them. */
+/**
+ * Rows from `from` to `to` inclusive, as the slot rules see them. With
+ * `meals`, only those meals: a meal the planner does not plan is hidden.
+ */
 export async function loadSlots(
   ctx: QueryCtx | MutationCtx,
   plannerId: Id<"planners">,
   from: string,
   to: string,
+  meals: readonly Meal[] = MEALS,
 ) {
-  const rows = await ctx.db
-    .query("planSlots")
-    .withIndex("by_planner_and_date", (q) =>
-      q.eq("plannerId", plannerId).gte("date", from).lte("date", to),
-    )
-    .take(2 * 31);
-  // The index orders "dinner" before "lunch"; callers want slot order.
+  const rows = (
+    await ctx.db
+      .query("planSlots")
+      .withIndex("by_planner_and_date", (q) =>
+        q.eq("plannerId", plannerId).gte("date", from).lte("date", to),
+      )
+      .take(MEALS.length * 31)
+  ).filter((row) => meals.includes(row.meal));
+  // The index orders meals by name ("breakfast", "dinner", "lunch"); callers want slot order.
   rows.sort((first, second) => slotOrder(first).localeCompare(slotOrder(second)));
   // Each Cook row's recipe is resolved once, for its name here and the week view.
   return await Promise.all(
@@ -228,7 +254,7 @@ export async function loadSlots(
   );
 }
 
-async function writeSlot(
+export async function writeSlot(
   ctx: MutationCtx,
   plannerId: Id<"planners">,
   userId: Id<"users">,
@@ -236,6 +262,8 @@ async function writeSlot(
   value: SlotValue | null,
 ) {
   const existing = await slotRow(ctx, plannerId, ref);
+  if (value === null && existing === null) return;
+  await rememberSlot(ctx, plannerId, userId, ref, existing);
   if (value === null) {
     if (existing !== null) await ctx.db.delete(existing._id);
     return;
@@ -292,10 +320,16 @@ async function resolvePlannerMeal(
   return { mealId, name };
 }
 
+/** The slots leftovers in `ref` can choose from: the planner's shown meals of the week before. */
+async function leftoverSlots(ctx: MutationCtx, plannerId: Id<"planners">, ref: SlotRef) {
+  const planner = await ctx.db.get(plannerId);
+  const meals = plannedMeals(planner?.meals);
+  return (await loadSlots(ctx, plannerId, addDays(ref.date, -6), ref.date, meals)).map(({ slot }) => slot);
+}
+
 /** The newest leftover choice for `ref`, or "other" (§2.3). */
 async function defaultLeftoverSource(ctx: MutationCtx, plannerId: Id<"planners">, ref: SlotRef) {
-  const slots = (await loadSlots(ctx, plannerId, addDays(ref.date, -6), ref.date)).map(({ slot }) => slot);
-  return leftoverChoices(slots, ref)[0] ?? ("other" as const);
+  return leftoverChoices(await leftoverSlots(ctx, plannerId, ref), ref)[0] ?? ("other" as const);
 }
 
 /** Writes a slot of `type` named `name` (ignored for Leftovers and Skip). */
@@ -427,6 +461,7 @@ export const createRecipeForSlot = mutation({
     if (!name) throw new Error("A recipe needs a name");
     const recipeId = await insertUserRecipe(ctx, userId, { title: name, ingredients: [], instructions: [] });
     await writeSlot(ctx, plannerId, userId, { date, meal }, { type: "cook", recipeId });
+    await noteCreatedRecipe(ctx, recipeId, name);
     return { recipeId, name };
   },
 });
@@ -452,8 +487,7 @@ export const setLeftoverOf = mutation({
       await writeSlot(ctx, plannerId, userId, ref, { type: "left", from: "other", ...(mealId ? { mealId } : {}) });
       return null;
     }
-    const slots = (await loadSlots(ctx, plannerId, addDays(date, -6), date)).map(({ slot }) => slot);
-    const offered = leftoverChoices(slots, ref).some(
+    const offered = leftoverChoices(await leftoverSlots(ctx, plannerId, ref), ref).some(
       (choice) => choice.date === from.date && choice.meal === from.meal,
     );
     if (!offered) throw new Error("That meal can’t be used as leftovers here");
@@ -525,9 +559,10 @@ export const week = query({
   returns: v.object({ slots: v.array(slotViewValidator) }),
   handler: async (ctx, { plannerId, start }) => {
     // Only the owner reads a planner, so recipe access is checked for the slot's writer (the owner).
-    await requirePlanner(ctx, plannerId);
+    const { planner } = await requirePlanner(ctx, plannerId);
     assertDate(start);
-    const loaded = await loadSlots(ctx, plannerId, addDays(start, -6), addDays(start, 6));
+    const meals = plannedMeals(planner.meals);
+    const loaded = await loadSlots(ctx, plannerId, addDays(start, -6), addDays(start, 6), meals);
     const slots = await Promise.all(
       loaded.map(async ({ cook, slot }) => {
         const view: typeof slotViewValidator.type = {
@@ -566,6 +601,68 @@ export const week = query({
       }),
     );
     return { slots };
+  },
+});
+
+export const todaySlotValidator = v.object({
+  type: slotTypeValidator,
+  /** The recipe's title, typed name, eat-out or other-leftovers name; "" if none. */
+  name: v.string(),
+  /** A Cook slot's usable recipe. */
+  recipeId: v.optional(v.id("recipes")),
+  /** A Cook slot whose recipe was removed or can no longer be opened. */
+  recipeRemoved: v.optional(v.literal(true)),
+  /** The earlier meal a Leftovers slot eats; `name` is that meal's name. */
+  source: v.optional(
+    v.object({ date: v.string(), meal: mealValidator, recipeId: v.optional(v.id("recipes")) }),
+  ),
+});
+
+/**
+ * The caller's plan for `date` (their local calendar date, from the browser):
+ * one entry per meal they plan, in day order, with `slot` null when that
+ * meal is unplanned. A user with no planner yet gets no meals.
+ */
+export const today = query({
+  args: { date: v.string() },
+  returns: v.object({
+    meals: v.array(v.object({ meal: mealValidator, slot: v.union(v.null(), todaySlotValidator) })),
+  }),
+  handler: async (ctx, { date }) => {
+    const userId = await requireUser(ctx);
+    assertDate(date);
+    const planner = await ownPlanner(ctx, userId);
+    if (planner === null) return { meals: [] };
+    const meals = plannedMeals(planner.meals);
+    // Six days back, for the meals today's leftovers come from.
+    const loaded = await loadSlots(ctx, planner._id, addDays(date, -6), date, meals);
+    const slots = loaded.map(({ slot }) => slot);
+    const usableRecipe = (ref: SlotRef) => {
+      const found = loaded.find(({ slot }) => slot.date === ref.date && slot.meal === ref.meal);
+      return found?.cook?.usable ? found.cook.recipeId : undefined;
+    };
+    return {
+      meals: meals.map((meal) => {
+        const found = loaded.find(({ slot }) => slot.date === date && slot.meal === meal);
+        if (found === undefined) return { meal, slot: null };
+        const { slot, cook } = found;
+        const view: typeof todaySlotValidator.type = { type: slot.type, name: slot.name };
+        if (cook !== null && cook.recipeId !== undefined) {
+          if (cook.usable) view.recipeId = cook.recipeId;
+          else view.recipeRemoved = true;
+        }
+        if (slot.type === "left") {
+          const resolved = resolveLeftover(slots, slot);
+          if (resolved?.kind === "source") {
+            const { date: sourceDate, meal: sourceMeal } = resolved.source;
+            const recipeId = usableRecipe(resolved.source);
+            view.name = resolved.source.name;
+            view.source = { date: sourceDate, meal: sourceMeal, ...(recipeId === undefined ? {} : { recipeId }) };
+          }
+        }
+        return { meal, slot: view };
+      }),
+    };
   },
 });
 

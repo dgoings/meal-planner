@@ -15,8 +15,9 @@ import {
   weekSummary,
   type SlotLike,
 } from "./plannerSlots";
+import type { Meal } from "./plannerRules";
 
-const cook = (date: string, meal: "lunch" | "dinner", name = "Chili"): SlotLike => ({ date, meal, type: "cook", name });
+const cook = (date: string, meal: Meal, name = "Chili"): SlotLike => ({ date, meal, type: "cook", name });
 
 describe("date keys", () => {
   it("adds days across months, years and daylight-saving changes", () => {
@@ -59,10 +60,69 @@ describe("slot order", () => {
     expect(slotOrder({ date: "2026-11-16", meal: "lunch" }) < slotOrder({ date: "2026-11-16", meal: "dinner" })).toBe(true);
   });
 
-  it("moves lunch to dinner, dinner to the next lunch, and stops at the week's last dinner", () => {
+  it("moves lunch to dinner, dinner to the next lunch, and stops at the week's last dinner when breakfast is off", () => {
+    const meals = ["lunch", "dinner"] as const;
+    expect(nextSlot({ date: "2026-11-16", meal: "lunch" }, "2026-11-16", meals)).toEqual({ date: "2026-11-16", meal: "dinner" });
+    expect(nextSlot({ date: "2026-11-16", meal: "dinner" }, "2026-11-16", meals)).toEqual({ date: "2026-11-17", meal: "lunch" });
+    expect(nextSlot({ date: "2026-11-22", meal: "dinner" }, "2026-11-16", meals)).toBeNull();
+  });
+});
+
+describe("breakfast", () => {
+  it("sorts breakfast before lunch and dinner on the same day, and after the day before's dinner", () => {
+    const refs = [
+      { date: "2026-11-17", meal: "dinner" },
+      { date: "2026-11-18", meal: "dinner" },
+      { date: "2026-11-18", meal: "breakfast" },
+      { date: "2026-11-18", meal: "lunch" },
+    ] as const;
+    expect([...refs].sort((a, b) => slotOrder(a).localeCompare(slotOrder(b))).map((ref) => `${ref.date} ${ref.meal}`)).toEqual([
+      "2026-11-17 dinner",
+      "2026-11-18 breakfast",
+      "2026-11-18 lunch",
+      "2026-11-18 dinner",
+    ]);
+  });
+
+  it("keeps lunch and dinner order keys as before, so saved grocery fingerprints still match", () => {
+    expect(slotOrder({ date: "2026-11-18", meal: "lunch" })).toBe("2026-11-180");
+    expect(slotOrder({ date: "2026-11-18", meal: "dinner" })).toBe("2026-11-181");
+  });
+
+  it("moves breakfast to lunch to dinner to the next day's breakfast", () => {
+    expect(nextSlot({ date: "2026-11-16", meal: "breakfast" }, "2026-11-16")).toEqual({ date: "2026-11-16", meal: "lunch" });
     expect(nextSlot({ date: "2026-11-16", meal: "lunch" }, "2026-11-16")).toEqual({ date: "2026-11-16", meal: "dinner" });
-    expect(nextSlot({ date: "2026-11-16", meal: "dinner" }, "2026-11-16")).toEqual({ date: "2026-11-17", meal: "lunch" });
+    expect(nextSlot({ date: "2026-11-16", meal: "dinner" }, "2026-11-16")).toEqual({ date: "2026-11-17", meal: "breakfast" });
     expect(nextSlot({ date: "2026-11-22", meal: "dinner" }, "2026-11-16")).toBeNull();
+  });
+
+  it("skips meals that are not planned", () => {
+    expect(nextSlot({ date: "2026-11-16", meal: "lunch" }, "2026-11-16", ["lunch"])).toEqual({ date: "2026-11-17", meal: "lunch" });
+    expect(nextSlot({ date: "2026-11-16", meal: "breakfast" }, "2026-11-16", ["breakfast", "dinner"])).toEqual({ date: "2026-11-16", meal: "dinner" });
+    expect(nextSlot({ date: "2026-11-16", meal: "dinner" }, "2026-11-16", ["lunch", "dinner"])).toEqual({ date: "2026-11-17", meal: "lunch" });
+    expect(nextSlot({ date: "2026-11-22", meal: "breakfast" }, "2026-11-16", ["breakfast"])).toBeNull();
+  });
+
+  it("offers only earlier meals as leftovers: breakfast can't eat the same day's lunch", () => {
+    const slots: SlotLike[] = [
+      cook("2026-11-17", "dinner", "Stew"),
+      cook("2026-11-18", "breakfast", "Pancakes"),
+      cook("2026-11-18", "lunch", "Soup"),
+    ];
+    expect(leftoverChoices(slots, { date: "2026-11-18", meal: "dinner" })).toEqual([
+      { date: "2026-11-18", meal: "lunch" },
+      { date: "2026-11-18", meal: "breakfast" },
+      { date: "2026-11-17", meal: "dinner" },
+    ]);
+    expect(leftoverChoices(slots, { date: "2026-11-18", meal: "breakfast" })).toEqual([{ date: "2026-11-17", meal: "dinner" }]);
+    const later: SlotLike = { date: "2026-11-18", meal: "breakfast", type: "left", name: "", from: { date: "2026-11-18", meal: "lunch" } };
+    expect(resolveLeftover([...slots, later], later)).toBeNull();
+  });
+
+  it("counts a week's slots only for the meals given", () => {
+    const slots: SlotLike[] = [cook("2026-11-16", "breakfast"), cook("2026-11-16", "lunch")];
+    expect(weekSummary(slots, "2026-11-16").planned).toBe(2);
+    expect(weekSummary(slots, "2026-11-16", ["lunch", "dinner"]).planned).toBe(1);
   });
 });
 

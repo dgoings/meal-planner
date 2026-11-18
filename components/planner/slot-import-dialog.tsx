@@ -12,6 +12,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import type { Meal } from "@/convex/lib/plannerRules";
 import { announceRecipeImport } from "@/lib/recipe-import-events";
 import { convexErrorCode, isMissingKeyCode } from "@/lib/recipe-import-errors";
+import { usePlannerUndo } from "./planner-undo";
 
 /**
  * "Import from link" for a slot holding a typed name: the app's usual import
@@ -35,6 +36,7 @@ export function SlotImportDialog({
   onStarted: (importId: Id<"recipeImports">) => void;
 }) {
   const importLink = useMutation(api.planner.importLink);
+  const { expectChange } = usePlannerUndo();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -45,6 +47,7 @@ export function SlotImportDialog({
     setError("");
     setMissingKeyCode(undefined);
     setBusy(true);
+    expectChange();
     try {
       const importId = await importLink({ plannerId, date, meal, url: url.trim() });
       announceRecipeImport(importId);

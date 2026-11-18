@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { MEAL_LABELS, MEALS, type Meal } from "@/convex/lib/plannerRules";
 import type { WeekStart } from "@/convex/lib/plannerSlots";
 
 const WEEK_STARTS: { value: WeekStart; label: string }[] = [
@@ -25,6 +26,7 @@ type PreferencesProps = {
   plannerId: Id<"planners">;
   weekStart: WeekStart;
   people: number;
+  meals: readonly Meal[];
   onWeekStartChange: (weekStart: WeekStart) => void;
 };
 
@@ -37,7 +39,7 @@ export function PlannerPreferencesDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogTitle>Planner settings</DialogTitle>
-        <DialogDescription>Choose the day your week starts and how many people you cook for.</DialogDescription>
+        <DialogDescription>Choose the day your week starts, the meals you plan and how many people you cook for.</DialogDescription>
         {/* Mounted only while open, so each opening starts from the saved values. */}
         <PreferencesFields {...props} />
       </DialogContent>
@@ -45,15 +47,16 @@ export function PlannerPreferencesDialog({
   );
 }
 
-function PreferencesFields({ plannerId, weekStart, people, onWeekStartChange }: PreferencesProps) {
+function PreferencesFields({ plannerId, weekStart, people, meals, onWeekStartChange }: PreferencesProps) {
   const updatePreferences = useMutation(api.planner.updatePreferences);
   const [peopleDraft, setPeopleDraft] = useState(String(people));
   // Shows the choice while it saves; the week moves only once it has saved.
   const [weekStartDraft, setWeekStartDraft] = useState(weekStart);
+  const [mealsDraft, setMealsDraft] = useState<readonly Meal[]>(meals);
   const [error, setError] = useState(false);
 
   /** Saves one setting; resolves to whether it saved. */
-  async function save(patch: { weekStart?: WeekStart; people?: number }) {
+  async function save(patch: { weekStart?: WeekStart; people?: number; meals?: Meal[] }) {
     setError(false);
     try {
       await updatePreferences({ plannerId, ...patch });
@@ -68,6 +71,14 @@ function PreferencesFields({ plannerId, weekStart, people, onWeekStartChange }: 
     setWeekStartDraft(next);
     if (await save({ weekStart: next })) onWeekStartChange(next);
     else setWeekStartDraft(weekStart);
+  }
+
+  async function toggleMeal(meal: Meal, on: boolean) {
+    const previous = mealsDraft;
+    const next = MEALS.filter((candidate) => (candidate === meal ? on : previous.includes(candidate)));
+    if (next.length === 0) return;
+    setMealsDraft(next);
+    if (!(await save({ meals: next }))) setMealsDraft(previous);
   }
 
   function commitPeople() {
@@ -88,6 +99,31 @@ function PreferencesFields({ plannerId, weekStart, people, onWeekStartChange }: 
           {WEEK_STARTS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
       </label>
+      <fieldset className="planner-meals-field">
+        <legend>Meals to plan</legend>
+        <div className="planner-meals-options">
+          {MEALS.map((meal) => {
+            const checked = mealsDraft.includes(meal);
+            // The last meal left on can't be turned off: a planner plans at least one meal.
+            const last = checked && mealsDraft.length === 1;
+            return (
+              <label key={meal} className="planner-meal-option">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={last}
+                  aria-describedby={last ? "planner-meals-hint" : undefined}
+                  onChange={(event) => void toggleMeal(meal, event.target.checked)}
+                />
+                {MEAL_LABELS[meal]}
+              </label>
+            );
+          })}
+        </div>
+        <p id="planner-meals-hint" className="planner-meals-hint">
+          {mealsDraft.length === 1 ? "Plan at least one meal. " : ""}Meals you turn off are hidden; anything planned for them comes back if you turn them on again.
+        </p>
+      </fieldset>
       <label className="grid gap-1.5 text-sm font-bold">
         People you cook for, yourself included
         <Input
