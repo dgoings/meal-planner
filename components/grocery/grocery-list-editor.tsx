@@ -217,9 +217,9 @@ export function GroceryListEditor({
     <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
       <div className="stack">
         <Card>
-          <CardContent className="stack">
+          <CardContent className="grocery-head stack">
             <label>
-              <span className="mb-2 block text-sm font-extrabold">List name</span>
+              <span className="grocery-name-label mb-2 block text-sm font-extrabold">List name</span>
               <Input
                 value={listName}
                 onChange={(event) => {
@@ -229,7 +229,7 @@ export function GroceryListEditor({
                 maxLength={200}
               />
             </label>
-            <form className="flex flex-col gap-3 sm:flex-row" onSubmit={addItem}>
+            <form className="grocery-add flex flex-col gap-3 sm:flex-row" onSubmit={addItem}>
               <label className="flex-1">
                 <span className="sr-only">Ingredient name</span>
                 <Input

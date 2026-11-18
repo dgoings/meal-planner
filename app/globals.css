@@ -332,3 +332,17 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .planner-day-slots { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
   .planner-slot .input, .planner-slot select { font-size: .95rem; }
 }
+
+/* Phone: the grocery list page keeps its header to one line so the first items show without scrolling. */
+@media (max-width: 767px) {
+  .grocery-list-page { position: relative; padding-top: .5rem; }
+  .grocery-list-page > .button { margin-bottom: .35rem; min-height: 40px; padding-inline: .5rem; }
+  .grocery-list-page .page-header { position: absolute; top: .5rem; right: 1rem; margin: 0; }
+  .grocery-list-page .page-header > div:first-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .card-content.grocery-head { gap: .5rem; padding: .6rem; }
+  .grocery-head .grocery-name-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .grocery-head .input { min-height: 42px; }
+  .grocery-head label:first-child .input { font-weight: 800; font-size: 1.05rem; }
+  .grocery-add { flex-direction: row; gap: .5rem; }
+  .grocery-add .button { flex: none; min-height: 42px; padding-inline: .8rem; }
+}
