@@ -185,6 +185,34 @@ describe("GroceryListEditor", () => {
     await user.click(within(status).getByRole("button", { name: "Undo" }));
     expect(screen.getByDisplayValue("Avocados")).toBeInTheDocument();
   });
+  it("takes server changes for rows not edited here and keeps local edits", async () => {
+    const user = userEvent.setup();
+    const item = (id: string, name: string, quantity: string) => ({ id, name, quantity, unit: "cup", category: "Pantry", checked: false });
+    const { rerender } = render(
+      <GroceryListEditor listId="list-1" initialItems={[item("item-1", "beans", "2"), item("item-2", "rice", "1")]} />,
+    );
+    const rice = screen.getByRole("textbox", { name: "Quantity for rice" });
+    await user.clear(rice);
+    await user.type(rice, "5");
+
+    rerender(
+      <GroceryListEditor listId="list-1" initialItems={[item("item-1", "beans", "4"), item("item-2", "rice", "2")]} />,
+    );
+    expect(screen.getByRole("textbox", { name: "Quantity for beans" })).toHaveValue("4");
+    expect(screen.getByRole("textbox", { name: "Quantity for rice" })).toHaveValue("5");
+  });
+
+  it("says which meals an item is for and what the plan now needs", () => {
+    render(
+      <GroceryListEditor
+        listId="list-1"
+        sourceLabel="For"
+        initialItems={[{ id: "item-1", name: "beans", quantity: "3", unit: "cans", category: "Pantry", checked: false, source: "Chili, Soup", planAmount: "4 cup" }]}
+      />,
+    );
+    expect(screen.getByText("For Chili, Soup · Plan now needs 4 cup")).toBeInTheDocument();
+  });
+
   describe("unsaved changes", () => {
     const milk = { id: "item-1", name: "Milk", quantity: "2", unit: "cups", category: "Dairy", checked: false };
     const phone = (matches: boolean) => {

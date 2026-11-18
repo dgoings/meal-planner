@@ -13,7 +13,7 @@ import { recipeImportFailureMessage } from "@/lib/recipe-import-errors";
 /**
  * "Import from link" on a recipe the user owns: runs the usual import, shows
  * what it found, and on confirmation fills this same recipe with it, so
- * anything that points at it keeps pointing at it.
+ * planner slots that point at it keep pointing at it.
  */
 export function ImportIntoRecipeDialog({
   recipeId,
