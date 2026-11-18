@@ -206,25 +206,6 @@ export const retryImport = mutation({
   },
 });
 
-export const queueAgentDiscoveredUrl = internalMutation({
-  args: {
-    userId: v.id("users"),
-    sourceUrl: v.string(),
-    sourceQuery: v.string(),
-  },
-  returns: v.id("recipeImports"),
-  handler: async (ctx, args) => {
-    if ((await ctx.db.get(args.userId)) === null) {
-      throw new Error("User was not found");
-    }
-    const queued = await queueRecipeSource(ctx, {
-      ...args,
-      sourceKind: "agent_discovery",
-    });
-    return queued.importId;
-  },
-});
-
 export const queueDiscoveredUrl = mutation({
   args: {
     sourceUrl: v.string(),

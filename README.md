@@ -128,6 +128,14 @@ The frontend currently includes the following responsive, navigable flows:
   **Needs an AI key** with **Try again**. An email whose import failed because
   of the user's provider account (rejected key, no credit, rate limit, unknown
   model) shows the reason and **Try again** too.
+- **Weekly planner:** plan breakfast, lunch and dinner a week at a time. Each
+  slot is Cook, Leftovers, Eat out or Skip. A Cook slot can attach a saved
+  recipe, create one, or import a pasted link; Leftovers point back at an
+  earlier meal. A week can be copied from an earlier one, the last change can
+  be undone, and the dashboard shows today's planned meals. Each week has a
+  grocery list built from its Cook slots, scaled by the number of people and
+  the leftovers planned from each meal. The meals to plan, the week's first
+  day and the number of people are planner preferences.
 - **Grocery lists:** list overview plus an interactive editor that can add,
   rename, check off, remove, restore, and change the quantity or unit of grocery
   items. Users can create recipe-named lists from saved recipe ingredients,
@@ -138,7 +146,7 @@ The frontend currently includes the following responsive, navigable flows:
   editor. Items from recipes are grouped by store section.
 - **Settings:** profile details, the AI provider key, and account deletion.
 - **Design-system states:** responsive layouts, accessible focus behavior,
-  loading skeletons, status badges, alerts, dialogs, empty-state scaffolding,
+  loading skeletons, alerts, dialogs, empty-state scaffolding,
   and a custom not-found page.
 
 Generated recipe lists and manually created lists use the Convex-backed editor;
@@ -420,8 +428,9 @@ and can be retried once one is saved.
 
 This version moves to Convex Auth 2.0, which cannot yet migrate Convex Auth v1
 accounts. After upgrading, every user registers again. The v1 `users` rows stay
-in the database with their old fields, but those accounts and their data are
-not linked to the newly registered accounts.
+in the database with their old fields. Once a user has registered again with
+the same email address, an operator can move the v1 account's data onto the
+new account with the functions in `convex/legacyAccounts.ts`.
 
 ## Known limitations
 

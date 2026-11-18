@@ -35,10 +35,6 @@ export class AiSettingsError extends Error {
   }
 }
 
-export function isAiProvider(value: string): value is AiProvider {
-  return (AI_PROVIDERS as readonly string[]).includes(value);
-}
-
 /**
  * The trimmed model, or undefined when an Anthropic model is left blank (the
  * default then applies at call time). OpenAI and OpenRouter have no default.

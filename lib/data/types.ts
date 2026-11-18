@@ -15,14 +15,6 @@ export type Recipe = {
   missingIngredients?: string[];
 };
 
-export type RecipeImport = {
-  id: string;
-  subject: string;
-  source: string;
-  status: "received" | "scraping" | "ready" | "attention";
-  detail: string;
-};
-
 export type GroceryItem = {
   id: string;
   name: string;

@@ -18,31 +18,11 @@
 
 The supplied Shopify URL redirected Firecrawl to Shopify's login screen. No private store data was accessed. Application-shell guidance therefore combines the observed Shopify login treatment with Shopify's [official admin navigation documentation](https://help.shopify.com/en/manual/shopify-admin/shopify-admin-overview). Any recommendation based on that documentation rather than a captured dashboard is marked **inferred**.
 
-Raw, compacted evidence is stored locally in `.firecrawl/design-sources.json`.
+## Reference sites
 
-## Reference screenshots
+RecipeSage, the Shopify login surface, Plan to Eat, Mealime and Samsung Food were captured as screenshots during research. The captures were not kept in the repository.
 
-### RecipeSage
-
-![Full-page RecipeSage reference](./.firecrawl/recipesage-screenshot.png)
-
-### Shopify login surface
-
-![Shopify login reference](./.firecrawl/shopify-screenshot.png)
-
-### Plan to Eat
-
-![Full-page Plan to Eat reference](./.firecrawl/plantoeat-screenshot.png)
-
-### Mealime
-
-![Full-page Mealime reference](./.firecrawl/mealime-screenshot.png)
-
-### Samsung Food
-
-![Full-page Samsung Food reference](./.firecrawl/samsungfood-screenshot.png)
-
-Use these screenshots only as visual research. Do not copy their logos, photography, illustrations, trademarks, or copy into PerfectPlate.
+Use these references only as visual research. Do not copy their logos, photography, illustrations, trademarks, or copy into PerfectPlate.
 
 ## Evidence legend
 
@@ -54,7 +34,7 @@ Use these screenshots only as visual research. Do not copy their logos, photogra
 
 The frontend scaffold must make these five capabilities first-class. Navigation, routes, reusable components, and application states should be created around them even before every backend operation is connected.
 
-1. **Email a recipe to PerfectPlate.** A user can send or forward an email containing a recipe link or recipe page to their assigned PerfectPlate inbox. The application shows receipt, Firecrawl extraction progress, parsed ingredients and instructions, failures, and the resulting recipe review screen.
+1. **Email a recipe to PerfectPlate.** A user can send or forward an email containing a recipe link or recipe page to their assigned PerfectPlate inbox. The application shows receipt, extraction progress, parsed ingredients and instructions, failures, and the resulting recipe review screen.
 2. **Discover recipes by intent.** A user can ask for recipe ideas using ingredients they already have, a mood or craving, or a recipe type. Results explain why each suggestion matches and expose a clear `Add to Recipe Book` action.
 3. **Recipe Book.** Saved recipes live in a section titled exactly **Recipe Book**. Each saved recipe can add all needed ingredients—or a user-selected subset—to a grocery list.
 4. **Food-blog subscriptions.** A dedicated **Subscriptions** tab lets a user ask the email agent to subscribe to food blogs, view subscription status, and review recipes received from those subscriptions.
@@ -65,7 +45,7 @@ The frontend scaffold must make these five capabilities first-class. Navigation,
 The frontend should define typed UI states for these operations without embedding provider logic:
 
 - Email receipt and delivery come from AgentMail-backed Convex functions.
-- Web extraction and recipe parsing come from Firecrawl-backed Convex actions.
+- Web extraction and recipe parsing come from Convex actions (Tavily for search).
 - Search suggestions, saved recipes, subscription status, and grocery edits come from authenticated Convex queries and mutations.
 - Provider keys, webhook secrets, assigned inbox identifiers, and raw webhook payloads never reach client components.
 - Every paid or user-owned operation displays pending, success, recoverable failure, and terminal failure states.

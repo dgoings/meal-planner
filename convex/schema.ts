@@ -91,8 +91,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_user", ["userId"])
-    .index("by_inbox", ["inboxId"]),
+    .index("by_user", ["userId"]),
 
   // A user-visible summary of each email delivered to a recipe inbox. Full
   // message bodies remain isolated inside the AgentMail component; this table
@@ -151,7 +150,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_normalized_url", ["normalizedUrl"])
-    .index("by_status", ["status"])
     .index("by_requester", ["requestedBy"])
     .index("by_requester_and_normalized_url", ["requestedBy", "normalizedUrl"])
     .index("by_source_event", ["sourceEventId"])
@@ -236,7 +234,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_normalized_source_url", ["normalizedSourceUrl"])
-    .index("by_public", ["isPublic"])
     .index("by_public_and_deleted_at", ["isPublic", "deletedAt"])
     .index("by_image_storage_id_and_deleted_at", ["imageStorageId", "deletedAt"])
     .index("by_import", ["importId"])
@@ -256,7 +253,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_normalized_name", ["normalizedName"])
-    .index("by_category", ["category"])
     .searchIndex("search_ingredients", { searchField: "name" }),
 
   // Parsed recipe lines. `originalText` preserves what the source displayed;

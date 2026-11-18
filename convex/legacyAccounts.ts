@@ -6,7 +6,7 @@ import { internalMutation, internalQuery, type QueryCtx } from "./_generated/ser
 // One-off tooling for the move to Convex Auth 2.0, which does not carry v1
 // credentials over. Each v1 user signs up again with the same email, and an
 // operator then moves the old row's data onto the new account from the
-// Convex dashboard or `npx convex run`. Delete this module once every legacy
+// Convex dashboard or `bunx convex run`. Delete this module once every legacy
 // row is gone.
 
 const BATCH_SIZE = 100;
