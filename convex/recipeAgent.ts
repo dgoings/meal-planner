@@ -2,6 +2,8 @@
 
 import { Agent } from "@convex-dev/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { v } from "convex/values";
 import { z } from "zod";
 import { components, internal } from "./_generated/api";
@@ -11,8 +13,12 @@ import {
   recipeExtractionValidator,
   type RecipeExtraction,
 } from "./lib/recipeAgentTypes";
+import {
+  recipeModelLabel,
+  resolveRecipeModelConfig,
+  type RecipeModelConfig,
+} from "./lib/recipeModel";
 
-const DEFAULT_RECIPE_MODEL = "claude-sonnet-5";
 const MAX_AGENT_MARKDOWN_CHARACTERS = 120_000;
 const MAX_AGENT_JSON_LD_CHARACTERS = 80_000;
 
@@ -73,23 +79,28 @@ const recipeExtractionSchema = z.object({
   warnings: z.array(z.string().trim().min(1).max(500)).max(20),
 });
 
-function recipeModelName(configuredModel?: string) {
-  return configuredModel?.trim() || DEFAULT_RECIPE_MODEL;
+function recipeLanguageModel({ provider, model, apiKey }: RecipeModelConfig) {
+  switch (provider) {
+    case "anthropic":
+      return createAnthropic({ apiKey })(model);
+    case "openai":
+      return createOpenAI({ apiKey })(model);
+    case "openrouter":
+      return createOpenAICompatible({
+        name: "openrouter",
+        baseURL: "https://openrouter.ai/api/v1",
+        apiKey,
+        supportsStructuredOutputs: true,
+      })(model);
+  }
 }
 
-function recipeAgent(configuredModel?: string) {
-  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error(
-      "ANTHROPIC_API_KEY is not configured on this Convex deployment",
-    );
-  }
-  const model = recipeModelName(configuredModel);
+function recipeAgent(config: RecipeModelConfig) {
   // @convex-dev/agent's Config type asserts the exact AI SDK provider spec
-  // version at compile time. Anthropic's current provider implements a newer
+  // version at compile time. The current AI SDK providers implement a newer
   // (compatible) spec version than that check recognizes.
   const languageModel: ConstructorParameters<typeof Agent>[1]["languageModel"] =
-    createAnthropic({ apiKey })(model) as never;
+    recipeLanguageModel(config) as never;
 
   return new Agent(components.agent, {
     name: "PerfectPlate Recipe Processor",
@@ -132,9 +143,9 @@ export const extractRecipe = internalAction({
     );
     if (input === null) throw new Error("Recipe source is not ready for processing");
 
-    const configuredModel = process.env.RECIPE_AGENT_MODEL;
-    const model = recipeModelName(configuredModel);
-    const agent = recipeAgent(configuredModel);
+    const config = resolveRecipeModelConfig(process.env);
+    const model = recipeModelLabel(config);
+    const agent = recipeAgent(config);
     const { thread } = await agent.continueThread(ctx, {
       threadId,
       userId,
