@@ -427,10 +427,9 @@ and can be retried once one is saved.
 #### Convex Auth 2.0
 
 This version moves to Convex Auth 2.0, which cannot yet migrate Convex Auth v1
-accounts. After upgrading, every user registers again. The v1 `users` rows stay
-in the database with their old fields. Once a user has registered again with
-the same email address, an operator can move the v1 account's data onto the
-new account with the functions in `convex/legacyAccounts.ts`.
+accounts. A deployment that still holds v1 accounts must move them first with
+upstream's `convex/legacyAccounts.ts`; this fork has removed that module and
+the v1 fields on `users`, because its deployments never had v1 accounts.
 
 ## Known limitations
 

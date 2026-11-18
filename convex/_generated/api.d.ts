@@ -14,7 +14,6 @@ import type * as crons from "../crons.js";
 import type * as email from "../email.js";
 import type * as groceryLists from "../groceryLists.js";
 import type * as http from "../http.js";
-import type * as legacyAccounts from "../legacyAccounts.js";
 import type * as lib_agentmail from "../lib/agentmail.js";
 import type * as lib_aiErrorCodes from "../lib/aiErrorCodes.js";
 import type * as lib_aiErrors from "../lib/aiErrors.js";
@@ -70,7 +69,6 @@ declare const fullApi: ApiFromModules<{
   email: typeof email;
   groceryLists: typeof groceryLists;
   http: typeof http;
-  legacyAccounts: typeof legacyAccounts;
   "lib/agentmail": typeof lib_agentmail;
   "lib/aiErrorCodes": typeof lib_aiErrorCodes;
   "lib/aiErrors": typeof lib_aiErrors;

@@ -464,11 +464,10 @@ describe("email functions", () => {
   it("attributes to the one verified owner when several users rows share an email", async () => {
     const t = initTest();
     const { userId } = await signedInUser(t, "shared@example.com");
-    // For example a v1 row of the same person, who signed up again on 2.0.
+    // A second row with the same address and no verified email of its own.
     await t.run(async (ctx) =>
       ctx.db.insert("users", {
         email: "shared@example.com",
-        emailVerificationTime: Date.now(),
         createdAt: Date.now(),
       }),
     );
@@ -993,15 +992,13 @@ describe("Convex Auth accounts", () => {
     }
   });
 
-  it("deleteUnverifiedUsers keeps legacy rows and rows being deleted", async () => {
+  it("deleteUnverifiedUsers keeps rows with an email and rows being deleted", async () => {
     const t = initTest();
     const longAgo = Date.now() - 400 * 24 * 60 * 60 * 1000;
-    const { legacy, deleting } = await t.run(async (ctx) => ({
-      // A verified Convex Auth v1 row, as it was written before the move.
-      legacy: await ctx.db.insert("users", {
-        name: "Legacy",
-        email: "legacy@example.com",
-        emailVerificationTime: longAgo,
+    const { confirmed, deleting } = await t.run(async (ctx) => ({
+      confirmed: await ctx.db.insert("users", {
+        name: "Confirmed",
+        email: "confirmed@example.com",
         createdAt: longAgo,
       }),
       deleting: await ctx.db.insert("users", {
@@ -1014,7 +1011,7 @@ describe("Convex Auth accounts", () => {
     await t.mutation(internal.users.deleteUnverifiedUsers, {});
 
     await t.run(async (ctx) => {
-      expect(await ctx.db.get(legacy)).not.toBeNull();
+      expect(await ctx.db.get(confirmed)).not.toBeNull();
       expect(await ctx.db.get(deleting)).not.toBeNull();
     });
   });
