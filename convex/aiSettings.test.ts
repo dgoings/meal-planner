@@ -196,6 +196,24 @@ describe("aiSettings.save", () => {
     expect(await rows(t)).toHaveLength(0);
   });
 
+  it("leaves a saved key untouched when a new one fails validation", async () => {
+    const t = initAuthTest();
+    const { userId, as } = await signedInUser(t, "ada@example.com");
+    await storeKey(t, userId, "openai", "gpt-x");
+    const [before] = await rows(t);
+    stubFetch(401, { error: { message: "Incorrect API key provided" } });
+
+    await expect(
+      as.action(api.aiSettings.save, {
+        provider: "openai",
+        model: "gpt-y",
+        apiKey: "sk-test-5555-bad1",
+      }),
+    ).rejects.toThrow("ai_key_invalid");
+    const [after] = await rows(t);
+    expect(after).toEqual(before);
+  });
+
   it("checks the model and key shape before calling the provider", async () => {
     const t = initAuthTest();
     const { as } = await signedInUser(t, "ada@example.com");

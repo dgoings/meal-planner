@@ -2,6 +2,7 @@ import { Blob as NodeBlob } from "node:buffer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import { userModelConfig } from "./lib/userModelConfig";
 import { queueRecipeSource } from "./recipeIngestion";
 import {
   emailedCode,
@@ -1273,6 +1274,44 @@ describe("recipe scrape persistence", () => {
       aiErrorCode: "ai_rate_limited",
       attemptCount: 0,
     });
+  });
+
+  it("turns an extraction that has no usable key into a stored, retryable code", async () => {
+    const t = initTest();
+    const userId = await createSignedInUser(t, "NoKeyExtract");
+    const importId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("recipeImports", {
+        requestedBy: userId,
+        sourceUrl: "https://example.com/extract",
+        normalizedUrl: "https://example.com/extract",
+        sourceKind: "direct",
+        status: "processing",
+        attemptCount: 1,
+        workflowId: "workflow-extract",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    // The decision extractRecipe makes before calling a model.
+    const settings = await t.query(internal.aiSettings.encryptedForUser, { userId });
+    const outcome = await userModelConfig(settings, TEST_AI_KEY_SECRET, userId);
+    expect(outcome).toEqual({ kind: "aiFailure", code: "ai_key_missing" });
+    if (outcome.kind !== "aiFailure") return;
+
+    // What the workflow does with it.
+    await t.mutation(internal.recipeIngestion.recordAiFailure, { importId, code: outcome.code });
+    await t.mutation(internal.recipeIngestion.onIngestionComplete, {
+      workflowId: "workflow-extract",
+      context: { importId },
+      result: { kind: "failed", error: "Uncaught Error: AI failure recorded" },
+    });
+    expect(await sessionOf(t, userId).query(api.email.importResult, { importId })).toMatchObject({
+      status: "failed",
+      aiErrorCode: "ai_key_missing",
+    });
+    expect(await t.run(async (ctx) => (await ctx.db.get(importId))?.attemptCount)).toBe(0);
   });
 
   it("never reads an AI failure out of an error message", async () => {
