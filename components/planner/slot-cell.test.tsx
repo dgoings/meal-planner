@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -178,14 +178,68 @@ describe("SlotCell editing", () => {
     await user.type(input("Monday lunch"), "Chili{Enter}");
     const lunch = screen.getByRole("region", { name: "Monday lunch" });
     expect(within(lunch).getByText("Saving…")).toBeInTheDocument();
-    expect(within(lunch).getByRole("button", { name: "Skip" })).toHaveAttribute("aria-disabled", "true");
-    await user.click(within(lunch).getByRole("button", { name: "Skip" }));
-    expect(mutation("setType")).not.toHaveBeenCalled();
 
     await act(async () => reject(new Error("offline")));
     expect(within(lunch).getByRole("alert")).toHaveTextContent("Couldn’t save this meal. Try again.");
     expect(input("Monday lunch")).toHaveValue("Chili");
-    expect(within(lunch).getByRole("button", { name: "Skip" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  describe("type buttons pressed straight after typing", () => {
+    it("turns “Chipotle” then Eat out into one Eat out change, with no recipe commit", async () => {
+      const user = userEvent.setup();
+      renderDays(["2026-11-16"]);
+      await user.type(input("Monday lunch"), "Chipotle");
+      await user.click(within(screen.getByRole("region", { name: "Monday lunch" })).getByRole("button", { name: "Eat out" }));
+      expect(mutation("commitText")).not.toHaveBeenCalled();
+      expect(mutation("setType")).toHaveBeenCalledTimes(1);
+      expect(mutation("setType")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", type: "out", text: "Chipotle" });
+    });
+
+    it("queues a type press behind a save in flight instead of dropping it", async () => {
+      const user = userEvent.setup();
+      let resolve: (value: unknown) => void = () => undefined;
+      mutation("commitText").mockImplementation(() => new Promise((done) => { resolve = done; }));
+      renderDays(["2026-11-16"]);
+      await user.type(input("Monday lunch"), "Chili{Enter}");
+      const lunch = screen.getByRole("region", { name: "Monday lunch" });
+      await user.click(within(lunch).getByRole("button", { name: "Skip" }));
+      expect(mutation("setType")).not.toHaveBeenCalled();
+      expect(within(lunch).getByRole("button", { name: "Skip" })).not.toHaveAttribute("aria-disabled");
+
+      await act(async () => resolve({ type: "cook", name: "Chili" }));
+      expect(mutation("setType")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", type: "skip" });
+    });
+
+    it("commits the draft once focus leaves the type buttons without a press", async () => {
+      const user = userEvent.setup();
+      renderDays(["2026-11-16"]);
+      await user.type(input("Monday lunch"), "Chipotle");
+      await user.tab({ shift: true });
+      await user.tab({ shift: true });
+      expect(mutation("commitText")).not.toHaveBeenCalled();
+      await act(async () => input("Monday dinner").focus());
+      expect(mutation("commitText")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", text: "Chipotle" });
+      expect(mutation("setType")).not.toHaveBeenCalled();
+    });
+
+    it("commits the draft when a press on a type button is abandoned", async () => {
+      vi.useFakeTimers();
+      try {
+        renderDays(["2026-11-16"]);
+        const field = input("Monday lunch");
+        const eatOut = within(screen.getByRole("region", { name: "Monday lunch" })).getByRole("button", { name: "Eat out" });
+        act(() => field.focus());
+        fireEvent.change(field, { target: { value: "Chipotle" } });
+        fireEvent.pointerDown(eatOut);
+        act(() => field.blur());
+        expect(mutation("commitText")).not.toHaveBeenCalled();
+        fireEvent.pointerUp(document.body);
+        await act(async () => vi.advanceTimersByTime(1000));
+        expect(mutation("commitText")).toHaveBeenCalledWith({ plannerId, date: "2026-11-16", meal: "lunch", text: "Chipotle" });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("imports a pasted link through the existing import flow and opens its result", async () => {

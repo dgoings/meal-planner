@@ -307,20 +307,30 @@ async function planSlot(
 
 const slotArgs = { plannerId: v.id("planners"), date: v.string(), meal: mealValidator };
 
-/** A type button: the selected type clears the slot, another replaces it (§2.3). */
+/**
+ * A type button: the selected type clears the slot, another replaces it (§2.3).
+ * `text` is the main input's unsaved draft when the button was pressed straight
+ * after typing; it becomes the name in this one change, so typing "Chipotle"
+ * then pressing Eat out never makes a "Chipotle" recipe first.
+ */
 export const setType = mutation({
-  args: { ...slotArgs, type: slotTypeValidator },
+  args: { ...slotArgs, type: slotTypeValidator, text: v.optional(v.string()) },
   returns: v.null(),
-  handler: async (ctx, { plannerId, date, meal, type }) => {
+  handler: async (ctx, { plannerId, date, meal, type, text }) => {
     const { userId } = await requirePlanner(ctx, plannerId);
     assertDate(date);
+    if (text !== undefined && isRecipeLink(text)) throw new Error("Paste recipe links with importLink");
     const ref = { date, meal };
     const row = await slotRow(ctx, plannerId, ref);
     if (row?.type === type) {
       await writeSlot(ctx, plannerId, userId, ref, null);
       return null;
     }
-    const carried = row !== null && (row.type === "cook" || row.type === "out") ? await slotName(ctx, row) : "";
+    const named = row === null || row.type === "cook" || row.type === "out";
+    const carried =
+      text !== undefined && named ? cleanName(text)
+      : row !== null && (row.type === "cook" || row.type === "out") ? await slotName(ctx, row)
+      : "";
     await planSlot(ctx, plannerId, userId, ref, type, carried);
     return null;
   },

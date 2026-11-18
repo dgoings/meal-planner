@@ -2,7 +2,7 @@
 
 import { useMutation } from "convex/react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type FocusEvent, type Ref } from "react";
 import { ImportResultDialog } from "@/components/discovery/import-result-dialog";
 import { Input } from "@/components/ui/input";
 import { api } from "@/convex/_generated/api";
@@ -56,19 +56,27 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
   const label = `${formatDay(date).long} ${meal}`;
   const controlId = slotControlId(date, meal);
 
-  /** Runs one change, tracking Saving… and the failure alert. Resolves to whether it saved. */
-  async function run(change: () => Promise<unknown>) {
-    setFailed(false);
+  // Changes to one slot run one after another, so a press made while a save
+  // is in flight waits for it rather than being dropped or racing it.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+
+  /** Queues one change, tracking Saving… and the failure alert. Resolves to whether it saved. */
+  function run(change: () => Promise<unknown>) {
     setPending((count) => count + 1);
-    try {
-      await change();
-      return true;
-    } catch {
-      setFailed(true);
-      return false;
-    } finally {
-      setPending((count) => count - 1);
-    }
+    const attempt = queue.current.then(async () => {
+      setFailed(false);
+      try {
+        await change();
+        return true;
+      } catch {
+        setFailed(true);
+        return false;
+      } finally {
+        setPending((count) => count - 1);
+      }
+    });
+    queue.current = attempt;
+    return attempt;
   }
 
   /** Enter: lunch, same day's dinner, next day's lunch; stays put on the last dinner (§2.3). */
@@ -93,13 +101,50 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
     document.getElementById(showsOther ? otherInputId(date, meal) : controlId)?.focus();
   });
 
+  // Typing then pressing a type button: the input's blur would commit the
+  // text as its own change (a "Chipotle" recipe before Eat out). Instead the
+  // blur is held while a type button is being pressed, and the press sends the
+  // draft with the type as one change. If no press follows, the draft commits.
+  const mainInput = useRef<SlotInputHandle>(null);
+  const typeGroup = useRef<HTMLDivElement>(null);
+  const pressing = useRef(false);
+  const abandon = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(abandon.current), []);
+
+  function holdBlur(event: FocusEvent<HTMLInputElement>) {
+    const to = event.relatedTarget;
+    return pressing.current || (to instanceof Node && typeGroup.current?.contains(to) === true);
+  }
+
+  function startPress() {
+    pressing.current = true;
+    clearTimeout(abandon.current);
+    // A click follows pointerup straight away; if none comes, the press was abandoned.
+    const settle = () => {
+      window.removeEventListener("pointerup", settle);
+      window.removeEventListener("pointercancel", settle);
+      clearTimeout(abandon.current);
+      abandon.current = setTimeout(() => {
+        if (!pressing.current) return;
+        pressing.current = false;
+        if (!typeGroup.current?.contains(document.activeElement)) mainInput.current?.flush();
+      }, 300);
+    };
+    window.addEventListener("pointerup", settle);
+    window.addEventListener("pointercancel", settle);
+  }
+
   function pressType(pressed: SlotType) {
-    // Ignored rather than disabled while saving, so focus can still land on the buttons.
-    if (pending > 0) return;
+    pressing.current = false;
+    clearTimeout(abandon.current);
+    const draft = mainInput.current?.takeDraft();
     const clearing = type === pressed;
     focusWhen.current = (current) => (clearing ? current === undefined : current?.type === pressed);
-    void run(() => setType({ plannerId, date, meal, type: pressed })).then((saved) => {
-      if (!saved) focusWhen.current = null;
+    const text = draft === undefined ? {} : { text: draft.text };
+    void run(() => setType({ plannerId, date, meal, type: pressed, ...text })).then((saved) => {
+      if (saved) return;
+      focusWhen.current = null;
+      draft?.restore();
     });
   }
 
@@ -123,7 +168,18 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
   return (
     <section ref={section} className={cn("planner-slot", type && `planner-slot-${type}`)} aria-label={label} aria-busy={pending > 0}>
       <p className="planner-slot-label" aria-hidden="true">{meal === "lunch" ? "Lunch" : "Dinner"}</p>
-      <div className="planner-types" role="group" aria-label={`${label} type`}>
+      <div
+        ref={typeGroup}
+        className="planner-types"
+        role="group"
+        aria-label={`${label} type`}
+        onBlur={(event) => {
+          // Focus moved on from the type buttons without a press: commit any held draft.
+          const to = event.relatedTarget;
+          if (to instanceof Node && typeGroup.current?.contains(to)) return;
+          if (!pressing.current) mainInput.current?.flush();
+        }}
+      >
         {SLOT_TYPES.map((option) => (
           <button
             key={option.type}
@@ -131,7 +187,7 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
             id={option.type === "skip" && type === "skip" ? controlId : undefined}
             className={`planner-type planner-type-${option.type}`}
             aria-pressed={type === option.type}
-            aria-disabled={pending > 0 || undefined}
+            onPointerDown={startPress}
             onClick={() => pressType(option.type)}
           >
             {option.label}
@@ -158,6 +214,8 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
         />
       ) : (
         <SlotInput
+          handle={mainInput}
+          holdBlur={holdBlur}
           id={controlId}
           label={label}
           initial={slot?.name ?? ""}
@@ -176,12 +234,24 @@ export function SlotCell({ plannerId, date, meal, weekStart, slots, requestFocus
   );
 }
 
+type SlotInputHandle = {
+  /**
+   * Hands over an uncommitted draft (not a link, which commits as usual) and
+   * marks it committed; `restore` undoes that if the change carrying it fails.
+   */
+  takeDraft: () => { text: string; restore: () => void } | undefined;
+  /** Commits an uncommitted draft, after a held blur. */
+  flush: () => void;
+};
+
 /**
  * A slot's text input. It keeps its own draft and commits on Enter, change
  * and blur; the last committed text guards against Enter followed by blur
  * committing twice.
  */
 function SlotInput({
+  handle,
+  holdBlur,
   id,
   label,
   initial,
@@ -189,6 +259,9 @@ function SlotInput({
   onCommit,
   onEnter,
 }: {
+  handle?: Ref<SlotInputHandle>;
+  /** Whether to hold this blur's commit for a type button press. */
+  holdBlur?: (event: FocusEvent<HTMLInputElement>) => boolean;
   id: string;
   label: string;
   initial: string;
@@ -218,6 +291,20 @@ function SlotInput({
     });
   }
 
+  useImperativeHandle(handle, () => ({
+    takeDraft() {
+      if (draft === committed.current) return undefined;
+      if (isRecipeLink(draft)) {
+        commit();
+        return undefined;
+      }
+      const previous = committed.current;
+      committed.current = draft;
+      return { text: draft, restore: () => { committed.current = previous; } };
+    },
+    flush: commit,
+  }));
+
   return (
     <Input
       id={id}
@@ -228,7 +315,9 @@ function SlotInput({
       enterKeyHint="next"
       list="planner-suggestions"
       onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
+      onBlur={(event) => {
+        if (!holdBlur?.(event)) commit();
+      }}
       onKeyDown={(event) => {
         if (event.key !== "Enter") return;
         event.preventDefault();

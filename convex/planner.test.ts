@@ -220,6 +220,26 @@ describe("setType", () => {
     expect(titles).toEqual(["Chili", "Tacos"]);
   });
 
+  it("uses unsaved typed text as the name in one change, so Eat out creates no recipe", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.setType, { plannerId, ...lunch, type: "out", text: " Chipotle " });
+    const out = await slotOf(t, plannerId, lunch.date, lunch.meal);
+    expect(out?.type).toBe("out");
+    const meal = await t.run(async (ctx) => (out?.type === "out" && out.mealId ? ctx.db.get(out.mealId) : null));
+    expect(meal?.name).toBe("Chipotle");
+    expect(await recipesOf(t, userId)).toEqual([]);
+
+    // Typed text replaces the saved name; Skip ignores it.
+    await as.mutation(api.planner.setType, { plannerId, ...lunch, type: "cook", text: "Burrito bowl" });
+    expect((await recipesOf(t, userId)).map((recipe) => recipe.title)).toEqual(["Burrito bowl"]);
+    await as.mutation(api.planner.setType, { plannerId, date: "2026-11-19", meal: "lunch", type: "skip", text: "Pizza" });
+    expect(await slotOf(t, plannerId, "2026-11-19", "lunch")).toMatchObject({ type: "skip" });
+    await expect(
+      as.mutation(api.planner.setType, { plannerId, ...lunch, type: "out", text: "https://example.com/chili" }),
+    ).rejects.toThrow(/importLink/);
+  });
+
   it("drops the name for Skip and picks the newest source for Leftovers across weeks", async () => {
     const t = initAuthTest();
     const { as, plannerId } = await plannerFor(t, "ada@example.com");
