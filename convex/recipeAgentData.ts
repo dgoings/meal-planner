@@ -7,6 +7,9 @@ import {
 } from "./_generated/server";
 import { recipeExtractionValidator } from "./lib/recipeAgentTypes";
 
+// Recipe pages get edited, so an old extraction is re-run rather than reused.
+const EXTRACTION_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
 function optional<T>(value: T | null): T | undefined {
   return value === null ? undefined : value;
 }
@@ -64,6 +67,7 @@ export const processingInput = internalQuery({
     v.null(),
     v.object({
       sourceUrl: v.string(),
+      normalizedUrl: v.string(),
       sourceKind: v.optional(
         v.union(
           v.literal("direct"),
@@ -96,6 +100,7 @@ export const processingInput = internalQuery({
     if (artifact === null) return null;
     return {
       sourceUrl: artifact.sourceUrl,
+      normalizedUrl: artifact.normalizedUrl,
       sourceKind: recipeImport.sourceKind,
       sourceQuery: recipeImport.sourceQuery,
       markdown: artifact.markdown,
@@ -104,6 +109,51 @@ export const processingInput = internalQuery({
       pageDescription: artifact.pageDescription,
       truncated: artifact.truncated,
     };
+  },
+});
+
+export const cachedExtraction = internalQuery({
+  args: { normalizedUrl: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({ model: v.string(), extraction: recipeExtractionValidator }),
+  ),
+  handler: async (ctx, { normalizedUrl }) => {
+    const cached = await ctx.db
+      .query("recipeExtractions")
+      .withIndex("by_normalized_url", (q) => q.eq("normalizedUrl", normalizedUrl))
+      .order("desc")
+      .first();
+    if (
+      cached === null ||
+      Date.now() - cached.createdAt > EXTRACTION_CACHE_MAX_AGE_MS
+    ) {
+      return null;
+    }
+    return { model: cached.model, extraction: cached.extraction };
+  },
+});
+
+export const cacheExtraction = internalMutation({
+  args: {
+    normalizedUrl: v.string(),
+    model: v.string(),
+    extraction: recipeExtractionValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, { normalizedUrl, model, extraction }) => {
+    const stale = await ctx.db
+      .query("recipeExtractions")
+      .withIndex("by_normalized_url", (q) => q.eq("normalizedUrl", normalizedUrl))
+      .collect();
+    for (const entry of stale) await ctx.db.delete(entry._id);
+    await ctx.db.insert("recipeExtractions", {
+      normalizedUrl,
+      model,
+      extraction,
+      createdAt: Date.now(),
+    });
+    return null;
   },
 });
 

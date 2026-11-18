@@ -264,11 +264,17 @@ export const ingestRecipeSource = recipeIngestionWorkflow.define({
       internal.recipeAgentData.ensureProcessingThread,
       { importId },
     );
-    const generated = await step.runAction(internal.recipeAgent.extractRecipe, {
-      importId,
-      threadId: processing.threadId,
-      userId: processing.userId,
-    });
+    // Model calls are the costly step, and a malformed response is usually
+    // repeated on retry, so this step gets one retry instead of the default.
+    const generated = await step.runAction(
+      internal.recipeAgent.extractRecipe,
+      {
+        importId,
+        threadId: processing.threadId,
+        userId: processing.userId,
+      },
+      { retry: { maxAttempts: 2, initialBackoffMs: 2_000, base: 2 } },
+    );
     const persisted = await step.runMutation(
       internal.recipeAgentData.persistGeneratedRecipe,
       {

@@ -4,8 +4,9 @@ PerfectPlate is an email-powered recipe organizer and meal-planning application.
 The application uses Next.js, TypeScript, Tailwind CSS, and shadcn-style UI
 components with Convex for authentication, realtime data, durable recipe
 ingestion, and grocery-list workflows. The app scrapes pasted or emailed
-recipe links directly, Anthropic's Claude structures recipe cards, and
-AgentMail receives recipes forwarded to a shared inbox.
+recipe links directly, a language model (Anthropic, OpenAI, or OpenRouter)
+structures recipe cards, and AgentMail receives recipes forwarded to a shared
+inbox.
 
 The frontend is hosted on Vercel at
 [perfectplate.vercel.app](https://perfectplate.vercel.app/); Convex remains the
@@ -111,7 +112,7 @@ The frontend currently includes the following responsive, navigable flows:
   failures. One plausible recipe URL is selected per email, inbound events and
   notifications are deduplicated, and the same URL validation and failure rules
   apply to both direct and email imports. The app scrapes the page before the
-  Anthropic recipe agent creates a structured preview; the recipe enters the
+  recipe agent creates a structured preview; the recipe enters the
   Recipe Book only when the user explicitly saves it. A failed import offers
   **Try again**. Resubmitting a link retries it automatically unless the agent
   already read the page and found no complete recipe; each link is limited to
@@ -173,32 +174,70 @@ npx convex env set TAVILY_API_KEY
 Without the key, search shows a "not set up" message and pasted links keep
 working.
 
-### Anthropic recipe agent
+### Recipe model provider
 
-After the page is scraped, the Convex Agent component uses an Anthropic Claude
-model through Anthropic's API directly (`convex/recipeAgent.ts`). It creates an
-editable recipe preview and stores its structured ingredients. The user can
-then save it to the Recipe Book, set it as current, or create a grocery list
-from its non-optional ingredients. Agent threads and messages are still
-persisted by the Convex Agent component, while normalized recipe and grocery
-data lives in the application's Convex tables.
+After the page is scraped, the Convex Agent component sends it to a language
+model (`convex/recipeAgent.ts`). It creates an editable recipe preview and
+stores its structured ingredients. The user can then save it to the Recipe
+Book, set it as current, or create a grocery list from its non-optional
+ingredients. Agent threads and messages are still persisted by the Convex Agent
+component, while normalized recipe and grocery data lives in the application's
+Convex tables.
 
-Create an Anthropic API key and store it only on the Convex deployment:
+When the page publishes a complete schema.org `Recipe` in JSON-LD (a title,
+ingredients, and instructions), the preview is built from that data directly
+and no model is called (`convex/lib/recipeJsonLd.ts`). Ingredient lines are
+parsed and given a grocery aisle by keyword; these imports record
+`schema.org-json-ld` as their model. Pages without complete structured data
+go to the model as described below.
+
+Model output is cached by page URL for 30 days in `recipeExtractions` and shared
+across users, so a page someone has already imported is not sent to the model
+again. Before a page is sent, reader comments and reviews after the recipe are
+dropped and the page text is capped, more tightly when JSON-LD is also sent.
+The extraction step is retried once on failure, and each attempt is sent
+without the earlier attempts' messages from the agent thread.
+
+The model can come from Anthropic, OpenAI, or OpenRouter. Create an API key
+for one of them and store it only on the Convex deployment, under that
+provider's variable:
+
+| Provider | `RECIPE_AGENT_PROVIDER` | API key variable |
+| --- | --- | --- |
+| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai` | `OPENAI_API_KEY` |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
 
 ```sh
-npx convex env set ANTHROPIC_API_KEY
+npx convex env set OPENAI_API_KEY
 ```
 
-The default model is `claude-sonnet-5`. To use another Claude model, set its
-model identifier on the same deployment:
+When exactly one of these keys is set, that provider is used. When several are
+set, OpenAI is used if its key is among them; otherwise name the provider
+explicitly, or imports fail with a message asking for it:
+
+```sh
+npx convex env set RECIPE_AGENT_PROVIDER openrouter
+```
+
+`RECIPE_AGENT_MODEL` names the model. It is optional for OpenAI, where the
+default is `gpt-5-mini`, and for Anthropic, where the default is
+`claude-sonnet-5`. It is required for OpenRouter, which has no default (use
+its `vendor/model` identifier). The model
+must support structured output:
 
 ```sh
 npx convex env set RECIPE_AGENT_MODEL
 ```
 
-No Anthropic key belongs in the frontend, `.env.local`, or repository. Agent
-failures are recorded on the import, and uncertain or truncated results are
-marked as needing review.
+Existing deployments that set only `ANTHROPIC_API_KEY` (and optionally
+`RECIPE_AGENT_MODEL`) keep working with no change. OpenRouter is reached
+through the AI SDK's OpenAI-compatible provider at
+`https://openrouter.ai/api/v1`.
+
+No model API key belongs in the frontend, `.env.local`, or repository. A missing
+or inconsistent model configuration, like any other agent failure, is recorded
+on the import, and uncertain or truncated results are marked as needing review.
 
 The backend exposes authenticated operations for editing recipe fields,
 instructions, ingredients, quantities, personal notes, grocery lists, and
@@ -294,7 +333,7 @@ In the Vercel project settings:
   to the Production environment only.
 
 On the production Convex deployment, set the site URL that the emailed links
-point at, alongside the Resend, Anthropic, and AgentMail values described
+point at, alongside the Resend, recipe model, and AgentMail values described
 above:
 
 ```sh
