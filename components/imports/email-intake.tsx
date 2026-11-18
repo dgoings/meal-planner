@@ -1,7 +1,8 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { BookOpen, Check, Clipboard, Inbox, LoaderCircle, Mail, MailCheck } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import { BookOpen, Check, Clipboard, Inbox, LoaderCircle, Mail, MailCheck, RotateCcw } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -9,11 +10,28 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { AI_SETTINGS_HREF } from "@/components/discovery/ai-key-required-alert";
 import { RecipePreviewModal } from "@/components/recipes/recipe-preview-modal";
+import { retryFailureMessage } from "@/lib/recipe-import-errors";
 
 export function EmailIntake() {
   const inbox = useQuery(api.email.currentInbox);
   const recentEmails = useQuery(api.email.recentInboundEmails);
+  const aiSettings = useQuery(api.aiSettings.get, {});
+  const retryImport = useMutation(api.recipeIngestion.retryImport);
+  const [retryFailure, setRetryFailure] = useState<{ emailId: string; message: string } | null>(null);
+
+  async function retry(emailId: string, importId: Id<"recipeImports">) {
+    setRetryFailure(null);
+    try {
+      await retryImport({ importId });
+    } catch (retryError) {
+      setRetryFailure({
+        emailId,
+        message: retryFailureMessage(retryError) ?? "This link can’t be retried again.",
+      });
+    }
+  }
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [previewRecipeId, setPreviewRecipeId] = useState<Id<"recipes"> | null>(null);
@@ -80,6 +98,16 @@ export function EmailIntake() {
             </div>
           </div>
 
+          {aiSettings?.settings === null && (
+            <Alert className="mt-6 border-amber-200 bg-amber-50" role="status">
+              <AlertTitle>Add an AI key</AlertTitle>
+              <AlertDescription>
+                Forwarded recipes won’t import until you add an AI key in Settings.{" "}
+                <Link className="font-bold underline" href={AI_SETTINGS_HREF}>Go to Settings</Link>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {activeEmail && (
             <div className="mt-6 flex flex-col gap-3 rounded-xl border border-primary/25 bg-primary-soft p-4 sm:flex-row sm:items-center" role="status">
               <MailCheck className="shrink-0 text-primary" size={22} />
@@ -110,12 +138,20 @@ export function EmailIntake() {
                     <p className="mt-1 truncate text-sm text-muted-foreground">
                       {email.sender ?? "Unknown sender"} · <time dateTime={new Date(email.receivedAt).toISOString()}>{new Date(email.receivedAt).toLocaleString()}</time>
                     </p>
+                    {retryFailure?.emailId === email._id && (
+                      <p className="mt-1 text-sm font-bold text-red-700" role="alert">{retryFailure.message}</p>
+                    )}
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
                     {email.status !== "already_imported" && (
                       <span className="rounded-full bg-surface-subtle px-3 py-1 text-xs font-bold text-foreground">{statusLabels[email.status]}</span>
                     )}
                     <span className="text-xs text-muted-foreground">{email.linkCount} {email.linkCount === 1 ? "link" : "links"}</span>
+                    {email.status === "needs_ai_key" && email.importId && (
+                      <Button size="sm" variant="secondary" onClick={() => void retry(email._id, email.importId!)}>
+                        <RotateCcw size={16} /> Try again
+                      </Button>
+                    )}
                     {email.recipeId && (
                       <Button size="sm" variant="secondary" onClick={() => setPreviewRecipeId(email.recipeId!)}>
                         <BookOpen size={16} /> View recipe

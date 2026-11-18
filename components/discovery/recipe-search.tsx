@@ -4,6 +4,7 @@ import { useAction, useMutation } from "convex/react";
 import { ConvexError } from "convex/values";
 import { BookPlus, ExternalLink, LoaderCircle, Search, Star } from "lucide-react";
 import { useRef, useState } from "react";
+import { AiKeyRequiredAlert } from "@/components/discovery/ai-key-required-alert";
 import { ImportResultDialog } from "@/components/discovery/import-result-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { announceRecipeImport } from "@/lib/recipe-import-events";
+import { convexErrorCode, isMissingKeyCode } from "@/lib/recipe-import-errors";
 
 type SearchResult = {
   url: string;
@@ -45,6 +47,7 @@ export function RecipeSearch() {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState("");
   const [queueingUrl, setQueueingUrl] = useState<string | null>(null);
+  const [missingKeyCode, setMissingKeyCode] = useState<string | undefined>();
   const [importId, setImportId] = useState<Id<"recipeImports"> | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const requestVersion = useRef(0);
@@ -73,6 +76,7 @@ export function RecipeSearch() {
 
   async function importResult(result: SearchResult) {
     setError("");
+    setMissingKeyCode(undefined);
     setQueueingUrl(result.url);
     try {
       const queuedImportId = await queueDiscoveredUrl({
@@ -82,8 +86,10 @@ export function RecipeSearch() {
       announceRecipeImport(queuedImportId);
       setImportId(queuedImportId);
       setDialogOpen(true);
-    } catch {
-      setError("We couldn’t import that recipe. Please try another result.");
+    } catch (queueError) {
+      const code = convexErrorCode(queueError);
+      if (isMissingKeyCode(code)) setMissingKeyCode(code);
+      else setError("We couldn’t import that recipe. Please try another result.");
     } finally {
       setQueueingUrl(null);
     }
@@ -113,6 +119,7 @@ export function RecipeSearch() {
             {isSearching ? "Searching…" : "Search recipes"}
           </Button>
         </form>
+        {missingKeyCode !== undefined && <AiKeyRequiredAlert code={missingKeyCode} />}
         {error && (
           <Alert className="mt-3 border-red-200 bg-red-50" role="alert">
             <AlertTitle>Search unavailable</AlertTitle>
