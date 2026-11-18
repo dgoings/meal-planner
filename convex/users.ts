@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import { requireUser } from "./lib/auth";
 
 const UNVERIFIED_USER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const UNVERIFIED_USER_BATCH_SIZE = 100;
@@ -95,8 +96,7 @@ export const updateProfile = mutation({
   args: { name: v.string() },
   returns: v.null(),
   handler: async (ctx, { name }) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) throw new Error("Unauthenticated");
+    const userId = await requireUser(ctx);
 
     const normalizedName = name.trim();
     if (normalizedName.length === 0) throw new Error("Name is required");
@@ -115,8 +115,7 @@ export const deleteAccount = mutation({
   args: { confirmation: v.literal("DELETE") },
   returns: v.null(),
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) throw new Error("Unauthenticated");
+    const userId = await requireUser(ctx);
 
     await ctx.db.patch(userId, {
       deletionRequestedAt: Date.now(),

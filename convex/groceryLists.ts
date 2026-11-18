@@ -1,4 +1,3 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -9,6 +8,9 @@ import {
 } from "./_generated/server";
 import { groceryCategory } from "./lib/groceryCategory";
 import { parseManualIngredient } from "./lib/manualIngredient";
+import { requireUser } from "./lib/auth";
+import { canAccessRecipe } from "./lib/recipeAccess";
+import { normalizeIngredientName } from "./lib/ingredientName";
 
 const groceryListStatus = v.union(
   v.literal("active"),
@@ -60,46 +62,63 @@ const groceryListItemValidator = v.object({
   updatedAt: v.number(),
 });
 
-const TEXT_LIMITS = {
-  quantityText: 100,
-  unit: 100,
-  category: 100,
-  notes: 500,
+const TEXT_FIELDS = {
+  quantityText: { label: "Quantity text", maximum: 100 },
+  unit: { label: "Unit", maximum: 100 },
+  category: { label: "Category", maximum: 100 },
+  notes: { label: "Notes", maximum: 500 },
 } as const;
+type TextField = keyof typeof TEXT_FIELDS;
 
-async function requireQueryUser(ctx: QueryCtx) {
-  const userId = await getAuthUserId(ctx);
-  if (userId === null) throw new Error("Unauthenticated");
-  return userId;
-}
+const MAX_LIST_ITEMS = 500;
+const EGG_NAME = /^(?:(?:extra )?large|medium|small|jumbo)? ?eggs?$/;
+const PLAIN_QUANTITY_TEXT = /^\d+(?:\.\d+)?(?:\s+\d+\/\d+)?$|^\d+\/\d+$/;
 
-async function requireMutationUser(ctx: MutationCtx) {
-  const userId = await getAuthUserId(ctx);
-  if (userId === null) throw new Error("Unauthenticated");
-  return userId;
-}
-
-function optionalString(value: string | null, label: string, maximum: number) {
-  if (value === null) return undefined;
+function optionalTextField(field: TextField, value: string | null | undefined) {
+  if (value === null || value === undefined) return undefined;
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
+  const { label, maximum } = TEXT_FIELDS[field];
   if (trimmed.length > maximum) {
     throw new Error(`${label} must be at most ${maximum} characters`);
   }
   return trimmed;
 }
 
-function normalizeIngredientName(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
+function optionalTextFields(values: Partial<Record<TextField, string | null>>) {
+  return {
+    quantityText: optionalTextField("quantityText", values.quantityText),
+    unit: optionalTextField("unit", values.unit),
+    category: optionalTextField("category", values.category),
+    notes: optionalTextField("notes", values.notes),
+  };
+}
+
+function validListName(value: string) {
+  const name = value.trim();
+  if (name.length === 0 || name.length > 200) {
+    throw new Error("List name must be between 1 and 200 characters");
+  }
+  return name;
+}
+
+function validItemName(value: string) {
+  const name = normalizeIngredientName(value);
+  if (name.length === 0 || name.length > 300) {
+    throw new Error("Item name must be between 1 and 300 characters");
+  }
+  return name;
+}
+
+function comparableName(value: string) {
+  return value.replace(/[‐‑‒–—-]/g, " ").replace(/\s+/g, " ");
 }
 
 function canonicalIngredientName(value: string) {
   const name = normalizeIngredientName(value);
-  const comparable = name.replace(/[‐‑‒–—-]/g, " ").replace(/\s+/g, " ");
+  const comparable = comparableName(name);
 
-  if (/^(?:(?:extra )?large|medium|small|jumbo)? ?eggs?$/.test(comparable)) {
-    return "eggs";
-  }
+  if (EGG_NAME.test(comparable)) return "eggs";
   if (/^(?:all purpose )?flour$/.test(comparable)) return "flour";
   if (/^(?:kosher )?salt$/.test(comparable)) return "salt";
 
@@ -133,12 +152,7 @@ const unitConversions: Record<string, { family: "volume" | "weight"; factor: num
 function normalizedIngredientUnit(ingredientName: string, value?: string) {
   if (!value?.trim()) return undefined;
   const unit = normalizeIngredientName(value).replace(/[().]/g, "").trim();
-  if (
-    canonicalIngredientName(ingredientName) === "eggs" &&
-    /^(?:(?:extra )?large|medium|small|jumbo)? ?eggs?$/.test(
-      unit.replace(/[‐‑‒–—-]/g, " ").replace(/\s+/g, " "),
-    )
-  ) {
+  if (canonicalIngredientName(ingredientName) === "eggs" && EGG_NAME.test(comparableName(unit))) {
     return undefined;
   }
   return unitAliases[unit] ?? unit;
@@ -253,23 +267,50 @@ function combinedNotes(first?: string, second?: string) {
   return [...new Set(notes)].join(" • ").slice(0, 500) || undefined;
 }
 
-function groceryIngredient(item: Doc<"recipeIngredients">) {
-  if (item.quantity !== undefined || item.quantityText || item.unit) {
-    const name = normalizeIngredientName(item.name);
-    const canonicalName = canonicalIngredientName(name);
-    const unit = normalizedIngredientUnit(canonicalName, item.unit);
-    const quantityText =
-      item.quantity !== undefined && item.quantityText && !/^\d+(?:\.\d+)?(?:\s+\d+\/\d+)?$|^\d+\/\d+$/.test(item.quantityText.trim())
-        ? formattedQuantity(item.quantity)
-        : item.quantityText;
-    return {
-      ...item,
-      name: canonicalName === "eggs" ? canonicalName : name,
-      normalizedName: canonicalName === "eggs" ? canonicalName : name,
-      quantityText,
-      unit,
-    };
+function mergedQuantity(
+  existing: { quantity?: number; quantityText?: string; unit?: string },
+  incoming: { name: string; quantity?: number; quantityText?: string; unit?: string },
+) {
+  const currentAmount = strictNumericQuantity(existing);
+  const incomingAmount = strictNumericQuantity(incoming);
+  const convertedIncoming = incomingAmount === undefined
+    ? undefined
+    : convertQuantity(incomingAmount, incoming.name, incoming.unit, existing.unit);
+  if (currentAmount !== undefined && convertedIncoming !== undefined) {
+    const total = validQuantity(currentAmount + convertedIncoming);
+    return { quantity: total, quantityText: formattedQuantity(total) };
   }
+  const quantities = [displayedQuantity(existing), displayedQuantity(incoming)].filter(
+    (quantity): quantity is string => Boolean(quantity),
+  );
+  return { quantity: undefined, quantityText: quantities.join(" + ").slice(0, 100) || undefined };
+}
+
+function hasQuantity(item: { quantity?: number; quantityText?: string; unit?: string }) {
+  return item.quantity !== undefined || Boolean(item.quantityText) || Boolean(item.unit);
+}
+
+function normalizedGroceryItem<
+  T extends { name: string; quantity?: number; quantityText?: string; unit?: string },
+>(item: T) {
+  const lowercaseName = normalizeIngredientName(item.name);
+  const canonicalName = canonicalIngredientName(lowercaseName);
+  const name = canonicalName === "eggs" ? canonicalName : lowercaseName;
+  const quantityText =
+    item.quantity !== undefined && item.quantityText && !PLAIN_QUANTITY_TEXT.test(item.quantityText.trim())
+      ? formattedQuantity(item.quantity)
+      : item.quantityText;
+  return {
+    ...item,
+    name,
+    normalizedName: name,
+    quantityText,
+    unit: normalizedIngredientUnit(canonicalName, item.unit),
+  };
+}
+
+function groceryIngredient(item: Doc<"recipeIngredients">) {
+  if (hasQuantity(item)) return normalizedGroceryItem(item);
   const parsed = parseManualIngredient(item.originalText);
   if (parsed.quantity === undefined) {
     const name = normalizeIngredientName(item.name);
@@ -287,22 +328,109 @@ function groceryIngredient(item: Doc<"recipeIngredients">) {
   };
 }
 
-function groceryItemForDisplay(item: Doc<"groceryListItems">) {
-  const lowercaseName = normalizeIngredientName(item.name);
-  const canonicalName = canonicalIngredientName(lowercaseName);
-  const isEgg = canonicalName === "eggs";
-  const unit = normalizedIngredientUnit(canonicalName, item.unit);
-  const quantityText =
-    item.quantity !== undefined && item.quantityText && !/^\d+(?:\.\d+)?(?:\s+\d+\/\d+)?$|^\d+\/\d+$/.test(item.quantityText.trim())
-      ? formattedQuantity(item.quantity)
-      : item.quantityText;
-  return {
-    ...item,
-    name: isEgg ? canonicalName : lowercaseName,
-    normalizedName: isEgg ? canonicalName : lowercaseName,
-    quantityText,
-    unit,
-  };
+type GroceryIngredient = ReturnType<typeof groceryIngredient>;
+type RecipeAddition = { recipeId: Id<"recipes">; multiplier: number; now: number };
+
+async function insertItemSource(
+  ctx: MutationCtx,
+  itemId: Id<"groceryListItems">,
+  ingredient: GroceryIngredient,
+  { recipeId, multiplier, now }: RecipeAddition,
+) {
+  await ctx.db.insert("groceryListItemSources", {
+    groceryListItemId: itemId,
+    recipeId,
+    recipeIngredientId: ingredient._id,
+    servingsMultiplier: multiplier,
+    quantityAdded: ingredient.quantity,
+    quantityTextAdded: ingredient.quantityText,
+    createdAt: now,
+  });
+}
+
+async function insertRecipeItem(
+  ctx: MutationCtx,
+  listId: Id<"groceryLists">,
+  ingredient: GroceryIngredient,
+  sortOrder: number,
+  addition: RecipeAddition,
+) {
+  const itemId = await ctx.db.insert("groceryListItems", {
+    listId,
+    ingredientId: ingredient.ingredientId,
+    name: ingredient.name,
+    normalizedName: ingredient.normalizedName,
+    quantity: ingredient.quantity,
+    quantityText: ingredient.quantityText,
+    unit: ingredient.unit,
+    category: await catalogCategory(ctx, ingredient.ingredientId),
+    notes: ingredient.notes,
+    isChecked: false,
+    sortOrder,
+    createdAt: addition.now,
+    updatedAt: addition.now,
+  });
+  await insertItemSource(ctx, itemId, ingredient, addition);
+  return itemId;
+}
+
+async function requiredRecipeIngredients(
+  ctx: MutationCtx,
+  recipeId: Id<"recipes">,
+  multiplier: number,
+) {
+  const recipeIngredients = await ctx.db
+    .query("recipeIngredients")
+    .withIndex("by_recipe_and_position", (q) => q.eq("recipeId", recipeId))
+    .take(200);
+  return recipeIngredients
+    .filter((ingredient) => !ingredient.isOptional)
+    .map(groceryIngredient)
+    .map((ingredient) => scaledIngredient(ingredient, multiplier));
+}
+
+function sourceRecipeIdsOf(lists: Doc<"groceryLists">[], ...extra: Id<"recipes">[]) {
+  return [...new Set([
+    ...lists.flatMap((list) => [
+      ...(list.sourceRecipeIds ?? []),
+      ...(list.sourceRecipeId === undefined ? [] : [list.sourceRecipeId]),
+    ]),
+    ...extra,
+  ])].slice(0, 500);
+}
+
+async function deleteItemWithSources(
+  ctx: MutationCtx,
+  itemId: Id<"groceryListItems">,
+) {
+  const sources = await ctx.db
+    .query("groceryListItemSources")
+    .withIndex("by_grocery_list_item", (q) => q.eq("groceryListItemId", itemId))
+    .take(100);
+  for (const source of sources) await ctx.db.delete(source._id);
+  await ctx.db.delete(itemId);
+}
+
+async function deleteListWithItems(
+  ctx: MutationCtx,
+  list: Doc<"groceryLists">,
+  items: Doc<"groceryListItems">[],
+  now: number,
+) {
+  for (const item of items) await deleteItemWithSources(ctx, item._id);
+  if (list.sourceRecipeId !== undefined) {
+    const recipe = await ctx.db.get(list.sourceRecipeId);
+    if (recipe?.importId !== undefined) {
+      const recipeImport = await ctx.db.get(recipe.importId);
+      if (recipeImport?.generatedGroceryListId === list._id) {
+        await ctx.db.patch(recipeImport._id, {
+          generatedGroceryListId: undefined,
+          updatedAt: now,
+        });
+      }
+    }
+  }
+  await ctx.db.delete(list._id);
 }
 
 async function requireOwnedList(
@@ -336,17 +464,7 @@ async function requireAccessibleRecipe(
   if (recipe === null || recipe.deletedAt !== undefined) {
     throw new Error("Recipe was not found");
   }
-  if (recipe.isPublic === true) return recipe;
-  const savedRecipe = await ctx.db
-    .query("savedRecipes")
-    .withIndex("by_user_and_recipe", (q) =>
-      q.eq("userId", userId).eq("recipeId", recipeId),
-    )
-    .unique();
-  if (savedRecipe !== null) return recipe;
-  const recipeImport =
-    recipe.importId === undefined ? null : await ctx.db.get(recipe.importId);
-  if (recipeImport?.requestedBy !== userId) throw new Error("Forbidden");
+  if (!(await canAccessRecipe(ctx, userId, recipe))) throw new Error("Forbidden");
   return recipe;
 }
 
@@ -354,7 +472,7 @@ export const listMine = query({
   args: {},
   returns: v.array(groceryListValidator),
   handler: async (ctx) => {
-    const userId = await requireQueryUser(ctx);
+    const userId = await requireUser(ctx);
     return await ctx.db
       .query("groceryLists")
       .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -367,7 +485,7 @@ export const itemProgress = query({
   args: { listId: v.id("groceryLists") },
   returns: v.union(v.null(), v.object({ total: v.number(), checked: v.number() })),
   handler: async (ctx, { listId }) => {
-    const userId = await requireQueryUser(ctx);
+    const userId = await requireUser(ctx);
     const list = await ctx.db.get(listId);
     if (list === null || list.userId !== userId) return null;
     const items = await ctx.db
@@ -395,7 +513,7 @@ export const get = query({
     }),
   ),
   handler: async (ctx, { listId }) => {
-    const userId = await requireQueryUser(ctx);
+    const userId = await requireUser(ctx);
     const list = await ctx.db.get(listId);
     if (list === null || list.userId !== userId) return null;
     const items = await ctx.db
@@ -436,14 +554,14 @@ export const get = query({
       })),
     );
     const visibleItems = categorizedItems.map((item) => {
-      if (!sourcedItemIds.has(item._id) || item.quantity !== undefined || item.quantityText || item.unit) {
-        return groceryItemForDisplay(item);
+      if (!sourcedItemIds.has(item._id) || hasQuantity(item)) {
+        return normalizedGroceryItem(item);
       }
       const parsed = parseManualIngredient(item.name);
       if (parsed.quantity === undefined) {
-        return groceryItemForDisplay(item);
+        return normalizedGroceryItem(item);
       }
-      return groceryItemForDisplay({
+      return normalizedGroceryItem({
         ...item,
         name: parsed.name,
         normalizedName: parsed.normalizedName,
@@ -460,7 +578,7 @@ export const summary = query({
   args: { listId: v.id("groceryLists") },
   returns: v.union(v.null(), v.object({ isComplete: v.boolean() })),
   handler: async (ctx, { listId }) => {
-    const userId = await requireQueryUser(ctx);
+    const userId = await requireUser(ctx);
     const list = await ctx.db.get(listId);
     if (list === null || list.userId !== userId) return null;
 
@@ -487,15 +605,11 @@ export const create = mutation({
   args: { name: v.string() },
   returns: v.id("groceryLists"),
   handler: async (ctx, { name }) => {
-    const userId = await requireMutationUser(ctx);
-    const normalizedName = name.trim();
-    if (normalizedName.length === 0 || normalizedName.length > 200) {
-      throw new Error("List name must be between 1 and 200 characters");
-    }
+    const userId = await requireUser(ctx);
     const now = Date.now();
     return await ctx.db.insert("groceryLists", {
       userId,
-      name: normalizedName,
+      name: validListName(name),
       status: "active",
       createdAt: now,
       updatedAt: now,
@@ -511,7 +625,7 @@ export const createFromRecipe = mutation({
   },
   returns: v.id("groceryLists"),
   handler: async (ctx, { recipeId, forceNew, servingsMultiplier }) => {
-    const userId = await requireMutationUser(ctx);
+    const userId = await requireUser(ctx);
     const recipe = await requireAccessibleRecipe(ctx, userId, recipeId);
     const multiplier = validatedServingsMultiplier(servingsMultiplier);
 
@@ -525,14 +639,7 @@ export const createFromRecipe = mutation({
       if (existing !== null) return existing._id;
     }
 
-    const recipeIngredients = await ctx.db
-      .query("recipeIngredients")
-      .withIndex("by_recipe_and_position", (q) => q.eq("recipeId", recipeId))
-      .take(200);
-    const requiredIngredients = recipeIngredients
-      .filter((ingredient) => !ingredient.isOptional)
-      .map(groceryIngredient)
-      .map((ingredient) => scaledIngredient(ingredient, multiplier));
+    const requiredIngredients = await requiredRecipeIngredients(ctx, recipeId, multiplier);
     const now = Date.now();
     const listId = await ctx.db.insert("groceryLists", {
       userId,
@@ -546,31 +653,9 @@ export const createFromRecipe = mutation({
       updatedAt: now,
     });
 
+    const addition = { recipeId, multiplier, now };
     for (const [index, ingredient] of requiredIngredients.entries()) {
-      const itemId = await ctx.db.insert("groceryListItems", {
-        listId,
-        ingredientId: ingredient.ingredientId,
-        name: ingredient.name,
-        normalizedName: ingredient.normalizedName,
-        quantity: ingredient.quantity,
-        quantityText: ingredient.quantityText,
-        unit: ingredient.unit,
-        category: await catalogCategory(ctx, ingredient.ingredientId),
-        notes: ingredient.notes,
-        isChecked: false,
-        sortOrder: index + 1,
-        createdAt: now,
-        updatedAt: now,
-      });
-      await ctx.db.insert("groceryListItemSources", {
-        groceryListItemId: itemId,
-        recipeId,
-        recipeIngredientId: ingredient._id,
-        servingsMultiplier: multiplier,
-        quantityAdded: ingredient.quantity,
-        quantityTextAdded: ingredient.quantityText,
-        createdAt: now,
-      });
+      await insertRecipeItem(ctx, listId, ingredient, index + 1, addition);
     }
 
     if (recipe.importId !== undefined) {
@@ -595,62 +680,36 @@ export const addRecipeToList = mutation({
   returns: v.id("groceryLists"),
   handler: async (ctx, { recipeId, listId, servingsMultiplier }) => {
     const multiplier = validatedServingsMultiplier(servingsMultiplier);
-    const userId = await requireMutationUser(ctx);
+    const userId = await requireUser(ctx);
     const list = await requireOwnedList(ctx, userId, listId);
     if (list.status !== "active") {
       throw new Error("Recipes can only be added to active grocery lists");
     }
     await requireAccessibleRecipe(ctx, userId, recipeId);
 
-    const [recipeIngredients, existingItems] = await Promise.all([
-      ctx.db.query("recipeIngredients").withIndex("by_recipe_and_position", (q) => q.eq("recipeId", recipeId)).take(200),
-      ctx.db.query("groceryListItems").withIndex("by_list_and_order", (q) => q.eq("listId", listId)).take(501),
+    const [requiredIngredients, existingItems] = await Promise.all([
+      requiredRecipeIngredients(ctx, recipeId, multiplier),
+      ctx.db.query("groceryListItems").withIndex("by_list_and_order", (q) => q.eq("listId", listId)).take(MAX_LIST_ITEMS + 1),
     ]);
-    if (existingItems.length > 500) throw new Error("The grocery list is full");
+    if (existingItems.length > MAX_LIST_ITEMS) throw new Error("The grocery list is full");
     const existingByKey = new Map(
       existingItems.map((item) => [ingredientMatchKey(item), item]),
     );
-    const requiredIngredients = recipeIngredients
-      .filter((item) => !item.isOptional)
-      .map(groceryIngredient)
-      .map((ingredient) => scaledIngredient(ingredient, multiplier));
     const missingKeys = new Set(
       requiredIngredients
         .map(ingredientMatchKey)
         .filter((key) => !existingByKey.has(key)),
     );
-    if (existingItems.length + missingKeys.size > 500) throw new Error("The grocery list is full");
+    if (existingItems.length + missingKeys.size > MAX_LIST_ITEMS) throw new Error("The grocery list is full");
     const now = Date.now();
+    const addition = { recipeId, multiplier, now };
     let nextSortOrder = existingItems.reduce((maximum, item) => Math.max(maximum, item.sortOrder), 0) + 1;
 
     for (const ingredient of requiredIngredients) {
       const key = ingredientMatchKey(ingredient);
       const existing = existingByKey.get(key);
       if (existing === undefined) {
-        const itemId = await ctx.db.insert("groceryListItems", {
-          listId,
-          ingredientId: ingredient.ingredientId,
-          name: ingredient.name,
-          normalizedName: ingredient.normalizedName,
-          quantity: ingredient.quantity,
-          quantityText: ingredient.quantityText,
-          unit: ingredient.unit,
-          category: await catalogCategory(ctx, ingredient.ingredientId),
-          notes: ingredient.notes,
-          isChecked: false,
-          sortOrder: nextSortOrder++,
-          createdAt: now,
-          updatedAt: now,
-        });
-        await ctx.db.insert("groceryListItemSources", {
-          groceryListItemId: itemId,
-          recipeId,
-          recipeIngredientId: ingredient._id,
-          servingsMultiplier: multiplier,
-          quantityAdded: ingredient.quantity,
-          quantityTextAdded: ingredient.quantityText,
-          createdAt: now,
-        });
+        const itemId = await insertRecipeItem(ctx, listId, ingredient, nextSortOrder++, addition);
         const inserted = await ctx.db.get(itemId);
         if (inserted !== null) existingByKey.set(key, inserted);
         continue;
@@ -660,34 +719,18 @@ export const addRecipeToList = mutation({
       if (sources.some((source) => source.recipeId === recipeId)) continue;
       const canonicalName = canonicalIngredientName(ingredient.name);
       const targetUnit = normalizedIngredientUnit(canonicalName, existing.unit);
-      const currentAmount = strictNumericQuantity(existing);
-      const incomingAmount = strictNumericQuantity(ingredient);
-      const convertedIncoming = incomingAmount === undefined
-        ? undefined
-        : convertQuantity(incomingAmount, canonicalName, ingredient.unit, targetUnit);
-      if (currentAmount !== undefined && convertedIncoming !== undefined) {
-        const total = validQuantity(currentAmount + convertedIncoming);
-        await ctx.db.patch(existing._id, { name: canonicalName, normalizedName: canonicalName, quantity: total, quantityText: formattedQuantity(total), unit: targetUnit, notes: combinedNotes(existing.notes, ingredient.notes), isChecked: false, updatedAt: now });
-      } else {
-        const quantities = [displayedQuantity(existing), displayedQuantity(ingredient)].filter((quantity): quantity is string => Boolean(quantity));
-        await ctx.db.patch(existing._id, { name: canonicalName, normalizedName: canonicalName, quantity: undefined, quantityText: quantities.join(" + ").slice(0, 100) || undefined, unit: targetUnit, notes: combinedNotes(existing.notes, ingredient.notes), isChecked: false, updatedAt: now });
-      }
-      await ctx.db.insert("groceryListItemSources", {
-        groceryListItemId: existing._id,
-        recipeId,
-        recipeIngredientId: ingredient._id,
-        servingsMultiplier: multiplier,
-        quantityAdded: ingredient.quantity,
-        quantityTextAdded: ingredient.quantityText,
-        createdAt: now,
+      await ctx.db.patch(existing._id, {
+        ...mergedQuantity({ ...existing, unit: targetUnit }, ingredient),
+        name: canonicalName,
+        normalizedName: canonicalName,
+        unit: targetUnit,
+        notes: combinedNotes(existing.notes, ingredient.notes),
+        isChecked: false,
+        updatedAt: now,
       });
+      await insertItemSource(ctx, existing._id, ingredient, addition);
     }
-    const sourceRecipeIds = [...new Set([
-      ...(list.sourceRecipeIds ?? []),
-      ...(list.sourceRecipeId === undefined ? [] : [list.sourceRecipeId]),
-      recipeId,
-    ])].slice(0, 500);
-    await ctx.db.patch(listId, { sourceRecipeIds, updatedAt: now });
+    await ctx.db.patch(listId, { sourceRecipeIds: sourceRecipeIdsOf([list], recipeId), updatedAt: now });
     return listId;
   },
 });
@@ -702,12 +745,9 @@ export const save = mutation({
   },
   returns: v.id("groceryLists"),
   handler: async (ctx, args) => {
-    const userId = await requireMutationUser(ctx);
-    const name = args.name.trim();
-    if (name.length === 0 || name.length > 200) {
-      throw new Error("List name must be between 1 and 200 characters");
-    }
-    if (args.items.length > 500) {
+    const userId = await requireUser(ctx);
+    const name = validListName(args.name);
+    if (args.items.length > MAX_LIST_ITEMS) {
       throw new Error("A grocery list can contain at most 500 items");
     }
 
@@ -737,8 +777,8 @@ export const save = mutation({
     const existingItems = await ctx.db
       .query("groceryListItems")
       .withIndex("by_list", (q) => q.eq("listId", listId))
-      .take(501);
-    if (existingItems.length > 500) {
+      .take(MAX_LIST_ITEMS + 1);
+    if (existingItems.length > MAX_LIST_ITEMS) {
       throw new Error("A grocery list can contain at most 500 items");
     }
     const existingById = new Map(existingItems.map((item) => [item._id, item]));
@@ -746,36 +786,13 @@ export const save = mutation({
     const now = Date.now();
 
     for (const item of args.items) {
-      const itemName = normalizeIngredientName(item.name);
-      if (itemName.length === 0 || itemName.length > 300) {
-        throw new Error("Item name must be between 1 and 300 characters");
-      }
+      const itemName = validItemName(item.name);
       const sortOrder = validatedSortOrder(item.sortOrder);
-      const quantityText =
-        item.quantityText === undefined
-          ? undefined
-          : optionalString(
-              item.quantityText,
-              "Quantity text",
-              TEXT_LIMITS.quantityText,
-            );
       const patch = {
         name: itemName,
-        normalizedName: normalizeIngredientName(itemName),
+        normalizedName: itemName,
         quantity: undefined,
-        quantityText,
-        unit:
-          item.unit === undefined
-            ? undefined
-            : optionalString(item.unit, "Unit", TEXT_LIMITS.unit),
-        category:
-          item.category === undefined
-            ? undefined
-            : optionalString(item.category, "Category", TEXT_LIMITS.category),
-        notes:
-          item.notes === undefined
-            ? undefined
-            : optionalString(item.notes, "Notes", TEXT_LIMITS.notes),
+        ...optionalTextFields(item),
         isChecked: item.isChecked,
         sortOrder,
         updatedAt: now,
@@ -810,14 +827,7 @@ export const save = mutation({
     for (const existingItem of existingItems) {
       if (retainedIds.has(existingItem._id)) continue;
       if (removedIds !== null && !removedIds.has(existingItem._id)) continue;
-      const sources = await ctx.db
-        .query("groceryListItemSources")
-        .withIndex("by_grocery_list_item", (q) =>
-          q.eq("groceryListItemId", existingItem._id),
-        )
-        .take(100);
-      for (const source of sources) await ctx.db.delete(source._id);
-      await ctx.db.delete(existingItem._id);
+      await deleteItemWithSources(ctx, existingItem._id);
     }
 
     await ctx.db.patch(listId, { name, needsInitialSave: false, updatedAt: now });
@@ -834,7 +844,7 @@ export const combineLists = mutation({
   },
   returns: v.id("groceryLists"),
   handler: async (ctx, { listId, otherListId, requestId, name }) => {
-    const userId = await requireMutationUser(ctx);
+    const userId = await requireUser(ctx);
     if (listId === otherListId) {
       throw new Error("Choose two different grocery lists");
     }
@@ -846,10 +856,7 @@ export const combineLists = mutation({
       )
       .unique();
     if (existingRequest !== null) return existingRequest._id;
-    const combinedName = name.trim();
-    if (combinedName.length === 0 || combinedName.length > 200) {
-      throw new Error("List name must be between 1 and 200 characters");
-    }
+    const combinedName = validListName(name);
     const firstList = await requireOwnedList(ctx, userId, listId);
     const secondList = await requireOwnedList(ctx, userId, otherListId);
 
@@ -857,13 +864,13 @@ export const combineLists = mutation({
       ctx.db
         .query("groceryListItems")
         .withIndex("by_list_and_order", (q) => q.eq("listId", listId))
-        .take(501),
+        .take(MAX_LIST_ITEMS + 1),
       ctx.db
         .query("groceryListItems")
         .withIndex("by_list_and_order", (q) => q.eq("listId", otherListId))
-        .take(501),
+        .take(MAX_LIST_ITEMS + 1),
     ]);
-    if (firstItems.length > 500 || secondItems.length > 500) {
+    if (firstItems.length > MAX_LIST_ITEMS || secondItems.length > MAX_LIST_ITEMS) {
       throw new Error("A source grocery list contains too many items");
     }
 
@@ -897,23 +904,7 @@ export const combineLists = mutation({
         continue;
       }
 
-      const currentAmount = strictNumericQuantity(existing);
-      const incomingAmount = strictNumericQuantity(item);
-      const convertedIncoming = incomingAmount === undefined
-        ? undefined
-        : convertQuantity(incomingAmount, item.name, item.unit, existing.unit);
-      if (currentAmount !== undefined && convertedIncoming !== undefined) {
-        const total = validQuantity(currentAmount + convertedIncoming);
-        existing.quantity = total;
-        existing.quantityText = formattedQuantity(total);
-      } else {
-        const quantities = [
-          existing.quantityText ?? existing.quantity?.toString(),
-          displayedQuantity(item),
-        ].filter((quantity): quantity is string => Boolean(quantity));
-        existing.quantity = undefined;
-        existing.quantityText = quantities.join(" + ").slice(0, 100) || undefined;
-      }
+      Object.assign(existing, mergedQuantity(existing, item));
       existing.notes = combinedNotes(existing.notes, item.notes);
       const canonicalName = canonicalIngredientName(item.name);
       existing.name = canonicalName;
@@ -924,17 +915,12 @@ export const combineLists = mutation({
       existing.sourceItemIds.push(item._id);
     }
     const combinedItems = [...combinedByIngredient.values()];
-    if (combinedItems.length > 500) {
+    if (combinedItems.length > MAX_LIST_ITEMS) {
       throw new Error("The combined grocery list would exceed 500 items");
     }
 
     const now = Date.now();
-    const sourceRecipeIds = [...new Set([
-      ...(firstList.sourceRecipeIds ?? []),
-      ...(firstList.sourceRecipeId === undefined ? [] : [firstList.sourceRecipeId]),
-      ...(secondList.sourceRecipeIds ?? []),
-      ...(secondList.sourceRecipeId === undefined ? [] : [secondList.sourceRecipeId]),
-    ])].slice(0, 500);
+    const sourceRecipeIds = sourceRecipeIdsOf([firstList, secondList]);
     const combinedListId = await ctx.db.insert("groceryLists", {
       userId,
       clientRequestId,
@@ -985,34 +971,8 @@ export const combineLists = mutation({
       }
     }
 
-    for (const [sourceList, sourceItems] of [
-      [firstList, firstItems],
-      [secondList, secondItems],
-    ] as const) {
-      for (const item of sourceItems) {
-        const sources = await ctx.db
-          .query("groceryListItemSources")
-          .withIndex("by_grocery_list_item", (q) =>
-            q.eq("groceryListItemId", item._id),
-          )
-          .take(100);
-        for (const source of sources) await ctx.db.delete(source._id);
-        await ctx.db.delete(item._id);
-      }
-      if (sourceList.sourceRecipeId !== undefined) {
-        const recipe = await ctx.db.get(sourceList.sourceRecipeId);
-        if (recipe?.importId !== undefined) {
-          const recipeImport = await ctx.db.get(recipe.importId);
-          if (recipeImport?.generatedGroceryListId === sourceList._id) {
-            await ctx.db.patch(recipeImport._id, {
-              generatedGroceryListId: undefined,
-              updatedAt: now,
-            });
-          }
-        }
-      }
-      await ctx.db.delete(sourceList._id);
-    }
+    await deleteListWithItems(ctx, firstList, firstItems, now);
+    await deleteListWithItems(ctx, secondList, secondItems, now);
     return combinedListId;
   },
 });
@@ -1025,16 +985,10 @@ export const updateList = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const userId = await requireMutationUser(ctx);
+    const userId = await requireUser(ctx);
     await requireOwnedList(ctx, userId, args.listId);
     const patch: Partial<Doc<"groceryLists">> = { updatedAt: Date.now() };
-    if (args.name !== undefined) {
-      const name = args.name.trim();
-      if (name.length === 0 || name.length > 200) {
-        throw new Error("List name must be between 1 and 200 characters");
-      }
-      patch.name = name;
-    }
+    if (args.name !== undefined) patch.name = validListName(args.name);
     if (args.status !== undefined) {
       patch.status = args.status;
       patch.completedAt = args.status === "completed" ? Date.now() : undefined;
@@ -1056,55 +1010,28 @@ export const addItem = mutation({
   },
   returns: v.id("groceryListItems"),
   handler: async (ctx, args) => {
-    const userId = await requireMutationUser(ctx);
+    const userId = await requireUser(ctx);
     await requireOwnedList(ctx, userId, args.listId);
-    const name = normalizeIngredientName(args.name);
-    if (name.length === 0 || name.length > 300) {
-      throw new Error("Item name must be between 1 and 300 characters");
-    }
+    const name = validItemName(args.name);
     const currentItems = await ctx.db
       .query("groceryListItems")
-      .withIndex("by_list", (q) => q.eq("listId", args.listId))
-      .take(500);
-    if (currentItems.length >= 500) {
+      .withIndex("by_list_and_order", (q) => q.eq("listId", args.listId))
+      .take(MAX_LIST_ITEMS);
+    if (currentItems.length >= MAX_LIST_ITEMS) {
       throw new Error("A grocery list can contain at most 500 items");
     }
-    const lastItem = await ctx.db
-      .query("groceryListItems")
-      .withIndex("by_list_and_order", (q) => q.eq("listId", args.listId))
-      .order("desc")
-      .first();
     const now = Date.now();
     return await ctx.db.insert("groceryListItems", {
       listId: args.listId,
       name,
-      normalizedName: normalizeIngredientName(name),
+      normalizedName: name,
       quantity:
         args.quantity === null || args.quantity === undefined
           ? undefined
           : validQuantity(args.quantity),
-      quantityText:
-        args.quantityText === undefined
-          ? undefined
-          : optionalString(
-              args.quantityText,
-              "Quantity text",
-              TEXT_LIMITS.quantityText,
-            ),
-      unit:
-        args.unit === undefined
-          ? undefined
-          : optionalString(args.unit, "Unit", TEXT_LIMITS.unit),
-      category:
-        args.category === undefined
-          ? undefined
-          : optionalString(args.category, "Category", TEXT_LIMITS.category),
-      notes:
-        args.notes === undefined
-          ? undefined
-          : optionalString(args.notes, "Notes", TEXT_LIMITS.notes),
+      ...optionalTextFields(args),
       isChecked: false,
-      sortOrder: (lastItem?.sortOrder ?? 0) + 1,
+      sortOrder: (currentItems.at(-1)?.sortOrder ?? 0) + 1,
       createdAt: now,
       updatedAt: now,
     });
@@ -1125,16 +1052,13 @@ export const updateItem = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const userId = await requireMutationUser(ctx);
+    const userId = await requireUser(ctx);
     await requireOwnedItem(ctx, userId, args.itemId);
     const patch: Partial<Doc<"groceryListItems">> = { updatedAt: Date.now() };
     if (args.name !== undefined) {
-      const name = normalizeIngredientName(args.name);
-      if (name.length === 0 || name.length > 300) {
-        throw new Error("Item name must be between 1 and 300 characters");
-      }
+      const name = validItemName(args.name);
       patch.name = name;
-      patch.normalizedName = normalizeIngredientName(name);
+      patch.normalizedName = name;
       // A renamed item is user-authored and may no longer match the catalog.
       patch.ingredientId = undefined;
     }
@@ -1144,23 +1068,12 @@ export const updateItem = mutation({
     }
     for (const field of ["quantityText", "unit", "category", "notes"] as const) {
       if (args[field] !== undefined) {
-        const label =
-          field === "quantityText"
-            ? "Quantity text"
-            : `${field[0].toUpperCase()}${field.slice(1)}`;
-        patch[field] = optionalString(args[field], label, TEXT_LIMITS[field]);
+        patch[field] = optionalTextField(field, args[field]);
       }
     }
     if (args.isChecked !== undefined) patch.isChecked = args.isChecked;
     if (args.sortOrder !== undefined) {
-      if (
-        !Number.isSafeInteger(args.sortOrder) ||
-        args.sortOrder < 0 ||
-        args.sortOrder > 100_000
-      ) {
-        throw new Error("Sort order must be an integer between 0 and 100000");
-      }
-      patch.sortOrder = args.sortOrder;
+      patch.sortOrder = validatedSortOrder(args.sortOrder);
     }
     await ctx.db.patch(args.itemId, patch);
     return null;
@@ -1171,14 +1084,9 @@ export const removeItem = mutation({
   args: { itemId: v.id("groceryListItems") },
   returns: v.null(),
   handler: async (ctx, { itemId }) => {
-    const userId = await requireMutationUser(ctx);
+    const userId = await requireUser(ctx);
     await requireOwnedItem(ctx, userId, itemId);
-    const sources = await ctx.db
-      .query("groceryListItemSources")
-      .withIndex("by_grocery_list_item", (q) => q.eq("groceryListItemId", itemId))
-      .take(100);
-    for (const source of sources) await ctx.db.delete(source._id);
-    await ctx.db.delete(itemId);
+    await deleteItemWithSources(ctx, itemId);
     return null;
   },
 });
@@ -1187,35 +1095,13 @@ export const removeList = mutation({
   args: { listId: v.id("groceryLists") },
   returns: v.null(),
   handler: async (ctx, { listId }) => {
-    const userId = await requireMutationUser(ctx);
+    const userId = await requireUser(ctx);
     const list = await requireOwnedList(ctx, userId, listId);
     const items = await ctx.db
       .query("groceryListItems")
       .withIndex("by_list", (q) => q.eq("listId", listId))
-      .take(500);
-    for (const item of items) {
-      const sources = await ctx.db
-        .query("groceryListItemSources")
-        .withIndex("by_grocery_list_item", (q) =>
-          q.eq("groceryListItemId", item._id),
-        )
-        .take(100);
-      for (const source of sources) await ctx.db.delete(source._id);
-      await ctx.db.delete(item._id);
-    }
-    if (list.sourceRecipeId !== undefined) {
-      const recipe = await ctx.db.get(list.sourceRecipeId);
-      if (recipe?.importId !== undefined) {
-        const recipeImport = await ctx.db.get(recipe.importId);
-        if (recipeImport?.generatedGroceryListId === listId) {
-          await ctx.db.patch(recipeImport._id, {
-            generatedGroceryListId: undefined,
-            updatedAt: Date.now(),
-          });
-        }
-      }
-    }
-    await ctx.db.delete(listId);
+      .take(MAX_LIST_ITEMS);
+    await deleteListWithItems(ctx, list, items, Date.now());
     return null;
   },
 });

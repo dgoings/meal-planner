@@ -5,6 +5,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { normalizeIngredientName } from "./lib/ingredientName";
 import { recipeExtractionValidator } from "./lib/recipeAgentTypes";
 
 // Recipe pages get edited, so an old extraction is re-run rather than reused.
@@ -12,10 +13,6 @@ const EXTRACTION_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 function optional<T>(value: T | null): T | undefined {
   return value === null ? undefined : value;
-}
-
-function normalizeIngredientName(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function sourceSiteFromUrl(sourceUrl: string) {
