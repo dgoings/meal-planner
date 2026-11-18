@@ -254,7 +254,7 @@ export function GroceryListEditor({
               {category}
             </h2>
             <Card>
-              <CardContent className="divide-y divide-border p-0">
+              <CardContent className="grocery-items divide-y divide-border">
                 {categoryItems.map((item) => (
                   <div className="grocery-row" key={item.id}>
                     <Checkbox

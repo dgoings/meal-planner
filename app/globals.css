@@ -195,6 +195,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .grocery-row .input { min-height: 38px; padding: .45rem .55rem; box-shadow: none; }
 .grocery-row .ingredient-name { border-color: transparent; background: transparent; font-weight: 700; }
 .grocery-row .ingredient-name.is-checked { color: var(--muted-foreground); text-decoration: line-through; }
+.card-content.grocery-items { padding: 0; }
 .grocery-row .item-source { grid-column: 2 / -1; margin-top: -.35rem; color: var(--muted-foreground); font-size: .7rem; }
 .recipe-detail-hero { display: grid; overflow: hidden; border: 1px solid var(--border); border-radius: 1rem; background: white; box-shadow: 0 14px 38px rgb(28 35 27 / .08); }
 .recipe-detail-hero .food-art { min-height: 320px; }
@@ -208,13 +209,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .marketing-nav .app-brand { padding: 0; gap: .4rem; font-size: 1rem; }
   .marketing-nav .button { white-space: nowrap; padding-inline: .65rem; }
   .hero-note { right: 0; }
-  .grocery-row { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .grocery-row > .checkbox { grid-column: 1; grid-row: 1; }
-  .grocery-row .ingredient-name { grid-column: 2; grid-row: 1; }
-  .grocery-row > .button { grid-column: 3; grid-row: 1; }
-  .grocery-row .quantity-input { grid-column: 2; grid-row: 2; width: 70px; }
-  .grocery-row .unit-input { grid-column: 2; grid-row: 2; margin-left: 78px; width: 82px; }
-  .grocery-row .item-source { grid-column: 2 / -1; grid-row: 3; }
+  /* Phone: one compact line per item (tick, name, amount, unit, remove) so more items fit on screen. */
+  .grocery-row { grid-template-columns: auto minmax(0, 1fr) 3.1rem 3.9rem auto; gap: .3rem; padding: .2rem .5rem; }
+  .grocery-row .input { min-height: 36px; padding: .2rem .35rem; }
+  .grocery-row .ingredient-name { padding-left: .25rem; text-overflow: ellipsis; }
+  .grocery-row > .button { width: 36px; height: 36px; min-height: 36px; padding: 0; }
+  .grocery-row .item-source { margin-top: -.3rem; padding: 0 0 .3rem .25rem; line-height: 1.2; }
 }
 
 .button.marketing-sign-in { display: none; }
