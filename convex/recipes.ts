@@ -2,6 +2,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { query, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { nutritionPerServingValidator, readRecipeNutrition } from "./lib/nutrition";
 
 const recipeValidator = v.object({
   _id: v.id("recipes"),
@@ -30,18 +31,8 @@ const recipeValidator = v.object({
       section: v.optional(v.string()),
     }),
   ),
-  nutrition: v.optional(
-    v.object({
-      servingSize: v.optional(v.string()),
-      calories: v.optional(v.string()),
-      protein: v.optional(v.string()),
-      carbohydrates: v.optional(v.string()),
-      fat: v.optional(v.string()),
-      fiber: v.optional(v.string()),
-      sugar: v.optional(v.string()),
-      sodium: v.optional(v.string()),
-    }),
-  ),
+  /** Read through `readRecipeNutrition`, so legacy text figures arrive as numbers too. */
+  nutritionPerServing: v.optional(nutritionPerServingValidator),
   deletedAt: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
@@ -101,13 +92,17 @@ async function requireUser(ctx: QueryCtx) {
 }
 
 async function recipeView(ctx: QueryCtx, recipe: Doc<"recipes">) {
-  const { imageStorageId, ...visibleRecipe } = recipe;
+  const { imageStorageId, nutrition, nutritionPerServing, ...visibleRecipe } = recipe;
+  void nutrition;
+  void nutritionPerServing;
   const storedImageUrl = imageStorageId
     ? await ctx.storage.getUrl(imageStorageId)
     : null;
+  const perServing = readRecipeNutrition(recipe);
   return {
     ...visibleRecipe,
     imageUrl: storedImageUrl ?? recipe.imageUrl,
+    ...(perServing === undefined ? {} : { nutritionPerServing: perServing }),
   };
 }
 

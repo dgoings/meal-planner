@@ -25,6 +25,7 @@ import type * as lib_boundedFetch from "../lib/boundedFetch.js";
 import type * as lib_groceryCategory from "../lib/groceryCategory.js";
 import type * as lib_groceryMerge from "../lib/groceryMerge.js";
 import type * as lib_manualIngredient from "../lib/manualIngredient.js";
+import type * as lib_nutrition from "../lib/nutrition.js";
 import type * as lib_planGrocery from "../lib/planGrocery.js";
 import type * as lib_plannerCopy from "../lib/plannerCopy.js";
 import type * as lib_plannerRules from "../lib/plannerRules.js";
@@ -80,6 +81,7 @@ declare const fullApi: ApiFromModules<{
   "lib/groceryCategory": typeof lib_groceryCategory;
   "lib/groceryMerge": typeof lib_groceryMerge;
   "lib/manualIngredient": typeof lib_manualIngredient;
+  "lib/nutrition": typeof lib_nutrition;
   "lib/planGrocery": typeof lib_planGrocery;
   "lib/plannerCopy": typeof lib_plannerCopy;
   "lib/plannerRules": typeof lib_plannerRules;

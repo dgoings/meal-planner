@@ -13,13 +13,13 @@ const recipes = [
     cuisines: ["Italian-inspired"],
     categories: ["Dinner", "Vegetarian", "One-pan"],
     keywords: ["chickpeas", "weeknight", "plant-based"],
-    nutrition: {
-      servingSize: "1 bowl",
-      calories: "410 kcal",
-      protein: "14 g",
-      carbohydrates: "48 g",
-      fat: "19 g",
-      fiber: "11 g",
+    nutritionPerServing: {
+      calories: 410,
+      proteinG: 14,
+      carbsG: 48,
+      fatG: 19,
+      fiberG: 11,
+      source: "manual",
     },
     ingredients: [
       ["Olive oil", "olive oil", 1, "tbsp", "1 tablespoon", "Pantry"],
@@ -50,13 +50,13 @@ const recipes = [
     cuisines: ["Mediterranean-inspired"],
     categories: ["Dinner", "Sheet pan", "High protein"],
     keywords: ["chicken", "meal prep", "family dinner"],
-    nutrition: {
-      servingSize: "1 plate",
-      calories: "520 kcal",
-      protein: "39 g",
-      carbohydrates: "42 g",
-      fat: "22 g",
-      fiber: "7 g",
+    nutritionPerServing: {
+      calories: 520,
+      proteinG: 39,
+      carbsG: 42,
+      fatG: 22,
+      fiberG: 7,
+      source: "manual",
     },
     ingredients: [
       ["Boneless chicken thighs", "boneless chicken thighs", 1.5, "lb", "1 1/2 pounds", "Meat"],
@@ -88,13 +88,13 @@ const recipes = [
     cuisines: ["Asian-inspired"],
     categories: ["Dinner", "Quick", "Vegetarian"],
     keywords: ["noodles", "20-minute meal", "peanut sauce"],
-    nutrition: {
-      servingSize: "1 bowl",
-      calories: "460 kcal",
-      protein: "16 g",
-      carbohydrates: "62 g",
-      fat: "18 g",
-      fiber: "5 g",
+    nutritionPerServing: {
+      calories: 460,
+      proteinG: 16,
+      carbsG: 62,
+      fatG: 18,
+      fiberG: 5,
+      source: "manual",
     },
     ingredients: [
       ["Noodles", "noodles", 12, "oz", "12 ounces", "Pantry"],
@@ -194,7 +194,7 @@ export const seed = internalMutation({
           position: index + 1,
           text,
         })),
-        nutrition: sample.nutrition,
+        nutritionPerServing: { ...sample.nutritionPerServing },
         createdAt: now,
         updatedAt: now,
       });

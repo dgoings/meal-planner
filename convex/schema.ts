@@ -4,6 +4,7 @@ import { mealValidator, notIncludedValidator, planSlotValidator, weekStartValida
 import { aiErrorCodeValidator, aiProviderValidator } from "./lib/aiValidators";
 import { plannerUndoFields } from "./lib/slotHistory";
 import { recipeExtractionValidator } from "./lib/recipeAgentTypes";
+import { legacyNutritionValidator, nutritionPerServingValidator } from "./lib/nutrition";
 
 const importStatus = v.union(
   v.literal("queued"),
@@ -211,18 +212,13 @@ export default defineSchema({
         section: v.optional(v.string()),
       }),
     ),
-    nutrition: v.optional(
-      v.object({
-        servingSize: v.optional(v.string()),
-        calories: v.optional(v.string()),
-        protein: v.optional(v.string()),
-        carbohydrates: v.optional(v.string()),
-        fat: v.optional(v.string()),
-        fiber: v.optional(v.string()),
-        sugar: v.optional(v.string()),
-        sodium: v.optional(v.string()),
-      }),
-    ),
+    // Per-serving figures in kcal, g and mg, with where they came from. Read
+    // through `readRecipeNutrition` (convex/lib/nutrition.ts).
+    nutritionPerServing: v.optional(nutritionPerServingValidator),
+    // Legacy: free-text figures that older rows still hold. Kept so those rows
+    // validate. Nothing writes it any more (saving figures by hand removes it),
+    // and `readRecipeNutrition` reads it when `nutritionPerServing` is absent.
+    nutrition: v.optional(legacyNutritionValidator),
     deletedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
