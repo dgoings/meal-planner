@@ -18,6 +18,7 @@ import {
 } from "@/convex/lib/plannerSlots";
 import { DayCard, dayCardId } from "./day-card";
 import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
+import { WeekGroceryList } from "./week-grocery-list";
 import { WeekStrip } from "./week-strip";
 
 /** What typing does, matching the rules exactly (fixes the prototype's bug 2). */
@@ -175,6 +176,7 @@ export function PlannerWeek() {
       ) : (
         <>
           <WeekStrip slots={week.slots} start={start} />
+          <WeekGroceryList plannerId={planner.plannerId} start={start} />
           <ul className="planner-days" aria-label={`Meals for ${formatWeekRange(start)}`}>
             {weekDates(start).map((date) => (
               <DayCard

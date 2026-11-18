@@ -28,5 +28,7 @@ export type GroceryItem = {
   unit: string;
   category: string;
   source?: string;
+  /** On a planner week's list: what the plan now asks for, when the amount was edited by hand. */
+  planAmount?: string;
   checked: boolean;
 };

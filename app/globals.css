@@ -288,6 +288,16 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .planner-error { color: var(--danger); font-weight: 700; }
 .planner-link-button { min-height: 32px; border: 0; background: none; color: var(--primary); padding: 0; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .planner-hint { margin: 0; color: var(--muted-foreground); font-size: .875rem; line-height: 1.55; }
+.planner-grocery { display: grid; gap: .5rem; border: 1px solid var(--border); border-radius: .75rem; background: var(--surface); padding: .85rem; }
+.planner-grocery-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.planner-grocery-title { display: flex; align-items: center; gap: .4rem; margin: 0; font-size: 1rem; font-weight: 800; }
+.planner-grocery-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.planner-grocery-note { margin: 0; color: var(--muted-foreground); font-size: .875rem; }
+.planner-grocery-missing ul { margin: .25rem 0 0; padding-left: 1.1rem; color: var(--muted-foreground); font-size: .875rem; }
+@media (max-width: 520px) {
+  .planner-grocery-actions { width: 100%; }
+  .planner-grocery-actions > .button { flex: 1 1 10rem; }
+}
 
 @media (min-width: 768px) {
   .planner-toolbar { margin-inline: 0; border: 1px solid var(--border); border-radius: .75rem; }
