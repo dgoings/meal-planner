@@ -28,6 +28,33 @@ describe("DayCard", () => {
     expect(within(day).getByRole("heading", { name: /Wed\s*Nov 18\s*Today/ })).toBeInTheDocument();
   });
 
+  it("shows breakfast, lunch and dinner in that order, each with the same four types", () => {
+    renderDay([]);
+    expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual([
+      "Wednesday breakfast",
+      "Wednesday lunch",
+      "Wednesday dinner",
+    ]);
+    const breakfast = screen.getByRole("region", { name: "Wednesday breakfast" });
+    expect(within(breakfast).getByText("Breakfast")).toBeInTheDocument();
+    expect(within(breakfast).getByRole("combobox", { name: "Wednesday breakfast" })).toHaveAttribute("placeholder", "Plan breakfast");
+    expect(within(within(breakfast).getByRole("group")).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Cook",
+      "Leftovers",
+      "Eat out",
+      "Skip",
+    ]);
+  });
+
+  it("shows only the meals to plan", () => {
+    render(
+      <ul>
+        <DayCard plannerId={plannerId} date="2026-11-18" today={false} weekStart="2026-11-16" slots={[]} requestFocus={vi.fn()} meals={["dinner"]} />
+      </ul>,
+    );
+    expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(["Wednesday dinner"]);
+  });
+
   it("shows unplanned slots with a type group and placeholders", () => {
     renderDay([]);
     expect(within(lunchOf()).getByRole("combobox", { name: "Wednesday lunch" })).toHaveAttribute("placeholder", "Plan lunch");

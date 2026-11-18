@@ -27,7 +27,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(mocks.search),
 }));
 
-const planner = { plannerId: "planner-1", weekStart: 1, people: 2 };
+const planner = { plannerId: "planner-1", weekStart: 1, people: 2, meals: ["breakfast", "lunch", "dinner"] };
 
 describe("PlannerWeek", () => {
   beforeEach(() => {
@@ -126,6 +126,25 @@ describe("PlannerWeek", () => {
     expect(people).toHaveValue(12);
   });
 
+  it("saves the meals to plan and keeps at least one on", async () => {
+    const user = userEvent.setup();
+    mocks.queries["planner:mine"] = { ...planner, meals: ["lunch", "dinner"] };
+    render(<PlannerWeek />);
+    expect(screen.queryByRole("region", { name: "Monday breakfast" })).toBeNull();
+    expect(screen.getByText("0 of 14 planned")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Planner settings" }));
+    const meals = screen.getByRole("group", { name: "Meals to plan" });
+    expect(screen.getByRole("checkbox", { name: "Breakfast" })).not.toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Breakfast" }));
+    expect(mocks.mutations["planner:updatePreferences"]).toHaveBeenLastCalledWith({ plannerId: "planner-1", meals: ["breakfast", "lunch", "dinner"] });
+    await user.click(screen.getByRole("checkbox", { name: "Breakfast" }));
+    await user.click(screen.getByRole("checkbox", { name: "Lunch" }));
+    expect(mocks.mutations["planner:updatePreferences"]).toHaveBeenLastCalledWith({ plannerId: "planner-1", meals: ["dinner"] });
+    expect(screen.getByRole("checkbox", { name: "Dinner" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Dinner" })).toBeDisabled();
+    expect(meals).toHaveTextContent("Plan at least one meal.");
+  });
+
   it("summarises the week in the strip", () => {
     mocks.queries["planner:week"] = {
       slots: [
@@ -136,7 +155,7 @@ describe("PlannerWeek", () => {
       ],
     };
     render(<PlannerWeek />);
-    expect(screen.getByText("3 of 14 planned")).toBeInTheDocument();
+    expect(screen.getByText("3 of 21 planned")).toBeInTheDocument();
     expect(screen.getByText("Cook 2")).toBeInTheDocument();
     expect(screen.getByText("Skip 1")).toBeInTheDocument();
     expect(screen.getByText("Leftovers 0")).toBeInTheDocument();

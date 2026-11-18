@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { notIncludedValidator, planSlotValidator, weekStartValidator } from "./lib/plannerValidators";
+import { mealValidator, notIncludedValidator, planSlotValidator, weekStartValidator } from "./lib/plannerValidators";
 import { aiErrorCodeValidator, aiProviderValidator } from "./lib/aiValidators";
 
 const importStatus = v.union(
@@ -360,6 +360,9 @@ export default defineSchema({
     ownerId: v.id("users"),
     weekStart: weekStartValidator,
     people: v.number(),
+    // "Meals to plan"; unset means every meal. Slots of a meal turned off are
+    // kept and hidden, so they come back when it is turned on again.
+    meals: v.optional(v.array(mealValidator)),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_owner", ["ownerId"]),

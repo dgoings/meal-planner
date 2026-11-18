@@ -1,4 +1,5 @@
 import type { Id } from "@/convex/_generated/dataModel";
+import { MEALS, type Meal } from "@/convex/lib/plannerRules";
 import { formatDay } from "@/convex/lib/plannerSlots";
 import { cn } from "@/lib/utils";
 import { SlotCell } from "./slot-cell";
@@ -13,6 +14,7 @@ export function DayCard({
   weekStart,
   slots,
   requestFocus,
+  meals = MEALS,
 }: {
   plannerId: Id<"planners">;
   date: string;
@@ -20,6 +22,8 @@ export function DayCard({
   weekStart: string;
   slots: SlotView[];
   requestFocus: (id: string) => void;
+  /** The meals to plan, in day order. */
+  meals?: readonly Meal[];
 }) {
   const day = formatDay(date);
   return (
@@ -29,7 +33,7 @@ export function DayCard({
         {today && <> <span className="planner-today-chip">Today</span></>}
       </h3>
       <div className="planner-day-slots">
-        {(["lunch", "dinner"] as const).map((meal) => (
+        {meals.map((meal) => (
           <SlotCell
             key={meal}
             plannerId={plannerId}
@@ -38,6 +42,7 @@ export function DayCard({
             weekStart={weekStart}
             slots={slots}
             requestFocus={requestFocus}
+            meals={meals}
           />
         ))}
       </div>

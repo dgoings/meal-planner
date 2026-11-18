@@ -2,7 +2,7 @@
 // §3.5). Dates are `YYYY-MM-DD` keys in the user's local calendar; all
 // arithmetic here is on those keys (in UTC), so it never depends on the
 // server's time zone.
-import type { Meal, SlotType } from "./plannerRules";
+import { MEALS, type Meal, type SlotType } from "./plannerRules";
 
 export type WeekStart = 0 | 1 | 6;
 export type SlotRef = { date: string; meal: Meal };
@@ -67,17 +67,29 @@ export function formatDay(date: string): { dow: string; long: string; monthDay: 
   };
 }
 
+/**
+ * A key that sorts slots by date, then in `MEALS` order. Lunch and dinner
+ * keep the keys they had before breakfast existed ("0" and "1") because
+ * saved grocery-list fingerprints contain them; breakfast's "/" sorts first.
+ */
+const MEAL_ORDER_KEYS: Record<Meal, string> = { breakfast: "/", lunch: "0", dinner: "1" };
+
 export function slotOrder(ref: SlotRef): string {
-  return ref.date + (ref.meal === "lunch" ? "0" : "1");
+  return ref.date + MEAL_ORDER_KEYS[ref.meal];
 }
 
 const sameRef = (a: SlotRef, b: SlotRef) => a.date === b.date && a.meal === b.meal;
 
-/** Where Enter goes: lunch, same day's dinner, next day's lunch; null after the last dinner. */
-export function nextSlot(ref: SlotRef, weekStart: string): SlotRef | null {
-  if (ref.meal === "lunch") return { date: ref.date, meal: "dinner" };
+/**
+ * Where Enter goes: the day's next planned meal, else the next day's first;
+ * null after the week's last planned meal. `meals` are the planned meals.
+ */
+export function nextSlot(ref: SlotRef, weekStart: string, meals: readonly Meal[] = MEALS): SlotRef | null {
+  const planned = MEALS.filter((meal) => meals.includes(meal));
+  const later = planned.find((meal) => MEALS.indexOf(meal) > MEALS.indexOf(ref.meal));
+  if (later !== undefined) return { date: ref.date, meal: later };
   const next = addDays(ref.date, 1);
-  return next <= addDays(weekStart, 6) ? { date: next, meal: "lunch" } : null;
+  return planned.length > 0 && next <= addDays(weekStart, 6) ? { date: next, meal: planned[0] } : null;
 }
 
 const isSource = (slot: SlotLike | undefined): slot is SlotLike =>
@@ -85,13 +97,13 @@ const isSource = (slot: SlotLike | undefined): slot is SlotLike =>
 
 /**
  * Earlier named Cook or Eat out slots that `ref` can be leftovers of: the
- * same day and the six days before, newest first, dinner before lunch.
+ * same day and the six days before, newest first (dinner, lunch, then breakfast).
  */
 export function leftoverChoices(slots: SlotLike[], ref: SlotRef): SlotRef[] {
   const choices: SlotRef[] = [];
   for (let back = 0; back <= 6; back += 1) {
     const date = addDays(ref.date, -back);
-    for (const meal of ["dinner", "lunch"] as const) {
+    for (const meal of [...MEALS].reverse()) {
       const candidate = slots.find((slot) => slot.date === date && slot.meal === meal);
       if (isSource(candidate) && slotOrder(candidate) < slotOrder(ref)) choices.push({ date, meal });
     }
@@ -116,11 +128,12 @@ export function resolveLeftover(
   return slot.name ? { kind: "other", name: slot.name } : null;
 }
 
-export function weekSummary(slots: SlotLike[], start: string) {
+/** Planned slots in the week by type, counting only `meals` (the planned meals). */
+export function weekSummary(slots: SlotLike[], start: string, meals: readonly Meal[] = MEALS) {
   const dates = new Set(weekDates(start));
   const summary = { planned: 0, cook: 0, left: 0, out: 0, skip: 0 };
   for (const slot of slots) {
-    if (!dates.has(slot.date)) continue;
+    if (!dates.has(slot.date) || !meals.includes(slot.meal)) continue;
     summary.planned += 1;
     summary[slot.type] += 1;
   }

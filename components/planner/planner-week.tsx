@@ -11,7 +11,6 @@ import {
   addDays,
   formatWeekRange,
   isDateKey,
-  localDateKey,
   weekDates,
   weekStartOf,
   type WeekStart,
@@ -19,6 +18,7 @@ import {
 import { DayCard, dayCardId } from "./day-card";
 import { PlannerPreferencesDialog } from "./planner-preferences-dialog";
 import { PlannerPickerProvider } from "./slot-combobox";
+import { useToday } from "./use-today";
 import { WeekGroceryList } from "./week-grocery-list";
 import { WeekStrip } from "./week-strip";
 
@@ -28,23 +28,6 @@ export const PLANNER_HINT =
 
 const PREVIOUS_WEEK_ID = "planner-previous-week";
 const NO_CHOICES = { recipes: [], meals: [] };
-
-/** Today's local date, refreshed every minute and when the page comes back into view. */
-function useToday() {
-  const [today, setToday] = useState(() => localDateKey(new Date()));
-  useEffect(() => {
-    const refresh = () => setToday(localDateKey(new Date()));
-    const timer = window.setInterval(refresh, 60_000);
-    document.addEventListener("visibilitychange", refresh);
-    window.addEventListener("focus", refresh);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", refresh);
-      window.removeEventListener("focus", refresh);
-    };
-  }, []);
-  return today;
-}
 
 /**
  * Keeps `--planner-toolbar-height` on the planner at the sticky toolbar's
@@ -177,7 +160,7 @@ export function PlannerWeek() {
         </div>
       ) : (
         <PlannerPickerProvider value={picker ?? NO_CHOICES}>
-          <WeekStrip slots={week.slots} start={start} />
+          <WeekStrip slots={week.slots} start={start} meals={planner.meals} />
           <WeekGroceryList plannerId={planner.plannerId} start={start} />
           <ul className="planner-days" aria-label={`Meals for ${formatWeekRange(start)}`}>
             {weekDates(start).map((date) => (
@@ -189,6 +172,7 @@ export function PlannerWeek() {
                 weekStart={start}
                 slots={week.slots}
                 requestFocus={requestFocus}
+                meals={planner.meals}
               />
             ))}
           </ul>
@@ -203,6 +187,7 @@ export function PlannerWeek() {
           plannerId={planner.plannerId}
           weekStart={planner.weekStart}
           people={planner.people}
+          meals={planner.meals}
           onWeekStartChange={(next) => showWeek(weekStartOf(start, next))}
         />
       )}

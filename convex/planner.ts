@@ -6,8 +6,11 @@ import {
   cleanName,
   isRecipeLink,
   mealKey,
+  MEALS,
   nameFromRecipeLink,
+  normalizeMeals,
   parseSlotText,
+  plannedMeals,
   type Meal,
   type SlotType,
 } from "./lib/plannerRules";
@@ -59,20 +62,35 @@ export function normalizePeople(value: number) {
   return Math.min(MAX_PEOPLE, Math.max(1, Math.round(value)));
 }
 
+async function ownPlanner(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
+  return await ctx.db
+    .query("planners")
+    .withIndex("by_owner", (q) => q.eq("ownerId", userId))
+    .first();
+}
+
 export const mine = query({
   args: {},
   returns: v.union(
     v.null(),
-    v.object({ plannerId: v.id("planners"), weekStart: weekStartValidator, people: v.number() }),
+    v.object({
+      plannerId: v.id("planners"),
+      weekStart: weekStartValidator,
+      people: v.number(),
+      /** The meals to plan, in day order. */
+      meals: v.array(mealValidator),
+    }),
   ),
   handler: async (ctx) => {
     const userId = await requireUser(ctx);
-    const planner = await ctx.db
-      .query("planners")
-      .withIndex("by_owner", (q) => q.eq("ownerId", userId))
-      .first();
+    const planner = await ownPlanner(ctx, userId);
     if (planner === null) return null;
-    return { plannerId: planner._id, weekStart: planner.weekStart, people: planner.people };
+    return {
+      plannerId: planner._id,
+      weekStart: planner.weekStart,
+      people: planner.people,
+      meals: plannedMeals(planner.meals),
+    };
   },
 });
 
@@ -81,10 +99,7 @@ export const ensure = mutation({
   returns: v.id("planners"),
   handler: async (ctx) => {
     const userId = await requireUser(ctx);
-    const existing = await ctx.db
-      .query("planners")
-      .withIndex("by_owner", (q) => q.eq("ownerId", userId))
-      .first();
+    const existing = await ownPlanner(ctx, userId);
     if (existing !== null) return existing._id;
     const now = Date.now();
     return await ctx.db.insert("planners", {
@@ -102,13 +117,16 @@ export const updatePreferences = mutation({
     plannerId: v.id("planners"),
     weekStart: v.optional(weekStartValidator),
     people: v.optional(v.number()),
+    /** Meals to plan; at least one. */
+    meals: v.optional(v.array(mealValidator)),
   },
   returns: v.null(),
-  handler: async (ctx, { plannerId, weekStart, people }) => {
+  handler: async (ctx, { plannerId, weekStart, people, meals }) => {
     await requirePlanner(ctx, plannerId);
     const patch: Partial<Doc<"planners">> = { updatedAt: Date.now() };
     if (weekStart !== undefined) patch.weekStart = weekStart;
     if (people !== undefined) patch.people = normalizePeople(people);
+    if (meals !== undefined) patch.meals = normalizeMeals(meals);
     await ctx.db.patch(plannerId, patch);
     return null;
   },
@@ -204,20 +222,26 @@ export async function toSlotLike(
   };
 }
 
-/** Rows from `from` to `to` inclusive, as the slot rules see them. */
+/**
+ * Rows from `from` to `to` inclusive, as the slot rules see them. With
+ * `meals`, only those meals: a meal the planner does not plan is hidden.
+ */
 export async function loadSlots(
   ctx: QueryCtx | MutationCtx,
   plannerId: Id<"planners">,
   from: string,
   to: string,
+  meals: readonly Meal[] = MEALS,
 ) {
-  const rows = await ctx.db
-    .query("planSlots")
-    .withIndex("by_planner_and_date", (q) =>
-      q.eq("plannerId", plannerId).gte("date", from).lte("date", to),
-    )
-    .take(2 * 31);
-  // The index orders "dinner" before "lunch"; callers want slot order.
+  const rows = (
+    await ctx.db
+      .query("planSlots")
+      .withIndex("by_planner_and_date", (q) =>
+        q.eq("plannerId", plannerId).gte("date", from).lte("date", to),
+      )
+      .take(MEALS.length * 31)
+  ).filter((row) => meals.includes(row.meal));
+  // The index orders meals by name ("breakfast", "dinner", "lunch"); callers want slot order.
   rows.sort((first, second) => slotOrder(first).localeCompare(slotOrder(second)));
   // Each Cook row's recipe is resolved once, for its name here and the week view.
   return await Promise.all(
@@ -292,10 +316,16 @@ async function resolvePlannerMeal(
   return { mealId, name };
 }
 
+/** The slots leftovers in `ref` can choose from: the planner's shown meals of the week before. */
+async function leftoverSlots(ctx: MutationCtx, plannerId: Id<"planners">, ref: SlotRef) {
+  const planner = await ctx.db.get(plannerId);
+  const meals = plannedMeals(planner?.meals);
+  return (await loadSlots(ctx, plannerId, addDays(ref.date, -6), ref.date, meals)).map(({ slot }) => slot);
+}
+
 /** The newest leftover choice for `ref`, or "other" (§2.3). */
 async function defaultLeftoverSource(ctx: MutationCtx, plannerId: Id<"planners">, ref: SlotRef) {
-  const slots = (await loadSlots(ctx, plannerId, addDays(ref.date, -6), ref.date)).map(({ slot }) => slot);
-  return leftoverChoices(slots, ref)[0] ?? ("other" as const);
+  return leftoverChoices(await leftoverSlots(ctx, plannerId, ref), ref)[0] ?? ("other" as const);
 }
 
 /** Writes a slot of `type` named `name` (ignored for Leftovers and Skip). */
@@ -452,8 +482,7 @@ export const setLeftoverOf = mutation({
       await writeSlot(ctx, plannerId, userId, ref, { type: "left", from: "other", ...(mealId ? { mealId } : {}) });
       return null;
     }
-    const slots = (await loadSlots(ctx, plannerId, addDays(date, -6), date)).map(({ slot }) => slot);
-    const offered = leftoverChoices(slots, ref).some(
+    const offered = leftoverChoices(await leftoverSlots(ctx, plannerId, ref), ref).some(
       (choice) => choice.date === from.date && choice.meal === from.meal,
     );
     if (!offered) throw new Error("That meal can’t be used as leftovers here");
@@ -525,9 +554,10 @@ export const week = query({
   returns: v.object({ slots: v.array(slotViewValidator) }),
   handler: async (ctx, { plannerId, start }) => {
     // Only the owner reads a planner, so recipe access is checked for the slot's writer (the owner).
-    await requirePlanner(ctx, plannerId);
+    const { planner } = await requirePlanner(ctx, plannerId);
     assertDate(start);
-    const loaded = await loadSlots(ctx, plannerId, addDays(start, -6), addDays(start, 6));
+    const meals = plannedMeals(planner.meals);
+    const loaded = await loadSlots(ctx, plannerId, addDays(start, -6), addDays(start, 6), meals);
     const slots = await Promise.all(
       loaded.map(async ({ cook, slot }) => {
         const view: typeof slotViewValidator.type = {
