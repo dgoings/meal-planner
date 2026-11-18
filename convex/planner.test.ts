@@ -301,3 +301,56 @@ describe("leftovers", () => {
     await expect(as.mutation(api.planner.commitOther, { plannerId, ...lunch, text: "Pizza" })).rejects.toThrow(/not leftovers/);
   });
 });
+
+describe("week and suggestions queries", () => {
+  it("returns resolved slots from six days before to six days after the start", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    for (const [date, text] of [["2026-11-10", "Six before"], ["2026-11-09", "Seven before"], ["2026-11-23", "Seven after"]] as const) {
+      await as.mutation(api.planner.commitText, { plannerId, date, meal: "lunch", text });
+    }
+    const { slots } = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(slots.map((slot) => slot.name)).toEqual(["Six before"]);
+  });
+
+  it("shows recipe details, planner meal names and leftover sources", async () => {
+    const t = initAuthTest();
+    const { as, plannerId } = await plannerFor(t, "ada@example.com");
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "lunch", text: "Chili" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "dinner", text: "out Thai" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-17", meal: "lunch", text: "leftovers" });
+    const chili = await slotOf(t, plannerId, "2026-11-16", "lunch");
+    const recipeId = chili?.type === "cook" ? chili.recipeId! : (null as never);
+    await as.mutation(api.recipeCards.addIngredient, { recipeId, name: "beans" });
+    await as.mutation(api.recipeCards.addIngredient, { recipeId, name: "tomatoes" });
+
+    const { slots } = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(slots).toEqual([
+      { date: "2026-11-16", meal: "lunch", type: "cook", name: "Chili", recipe: { recipeId, ingredientCount: 2, available: true } },
+      { date: "2026-11-16", meal: "dinner", type: "out", name: "Thai" },
+      { date: "2026-11-17", meal: "lunch", type: "left", name: "", from: { date: "2026-11-16", meal: "dinner" } },
+    ]);
+
+    await as.mutation(api.recipeCards.removeCard, { recipeId });
+    const after = await as.query(api.planner.week, { plannerId, start: "2026-11-16" });
+    expect(after.slots[0]).toMatchObject({ name: "Chili", recipe: { recipeId, ingredientCount: 0, available: false } });
+  });
+
+  it("suggests saved recipes and planner meals once each, sorted", async () => {
+    const t = initAuthTest();
+    const { as, userId, plannerId } = await plannerFor(t, "ada@example.com");
+    await t.run((ctx) => insertUserRecipe(ctx, userId, { title: "Chili", ingredients: [], instructions: [] }));
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "lunch", text: "out chili" });
+    await as.mutation(api.planner.commitText, { plannerId, date: "2026-11-16", meal: "dinner", text: "out Bao" });
+    expect(await as.query(api.planner.suggestions, { plannerId })).toEqual(["Bao", "Chili"]);
+  });
+
+  it("rejects anonymous callers and other users", async () => {
+    const t = initAuthTest();
+    const { plannerId } = await plannerFor(t, "ada@example.com");
+    const grace = await signedInUser(t, "grace@example.com");
+    await expect(t.query(api.planner.week, { plannerId, start: "2026-11-16" })).rejects.toThrow(/Unauthenticated/);
+    await expect(grace.as.query(api.planner.week, { plannerId, start: "2026-11-16" })).rejects.toThrow(/Planner was not found/);
+    await expect(grace.as.query(api.planner.suggestions, { plannerId })).rejects.toThrow(/Planner was not found/);
+  });
+});

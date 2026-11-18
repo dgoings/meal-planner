@@ -7,16 +7,19 @@ import {
   addDays,
   isDateKey,
   leftoverChoices,
+  slotOrder,
   type SlotLike,
   type SlotRef,
 } from "./lib/plannerSlots";
 import {
   leftoverFromValidator,
   mealValidator,
+  slotRefValidator,
   slotTypeValidator,
   weekStartValidator,
 } from "./lib/plannerValidators";
 import { insertUserRecipe } from "./lib/userRecipes";
+import { canAccessRecipe } from "./recipes";
 
 const MAX_PEOPLE = 12;
 
@@ -161,6 +164,8 @@ export async function loadSlots(
       q.eq("plannerId", plannerId).gte("date", from).lte("date", to),
     )
     .take(2 * 31);
+  // The index orders "dinner" before "lunch"; callers want slot order.
+  rows.sort((first, second) => slotOrder(first).localeCompare(slotOrder(second)));
   return await Promise.all(rows.map(async (row) => ({ row, slot: await toSlotLike(ctx, row) })));
 }
 
@@ -361,5 +366,90 @@ export const commitOther = mutation({
     const plannerMeal = await resolvePlannerMeal(ctx, plannerId, userId, name);
     await writeSlot(ctx, plannerId, userId, ref, { type: "left", from: "other", mealId: plannerMeal.mealId });
     return { name: plannerMeal.name };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Reading a week
+
+const INGREDIENT_COUNT_LIMIT = 200;
+const SUGGESTION_LIMIT = 500;
+
+export const slotViewValidator = v.object({
+  date: v.string(),
+  meal: mealValidator,
+  type: slotTypeValidator,
+  name: v.string(),
+  recipe: v.optional(
+    v.object({ recipeId: v.id("recipes"), ingredientCount: v.number(), available: v.boolean() }),
+  ),
+  from: v.optional(v.union(slotRefValidator, v.literal("other"))),
+});
+
+/**
+ * The slots from six days before `start` to six days after it, so the
+ * client can offer leftovers from the previous week.
+ */
+export const week = query({
+  args: { plannerId: v.id("planners"), start: v.string() },
+  returns: v.object({ slots: v.array(slotViewValidator) }),
+  handler: async (ctx, { plannerId, start }) => {
+    const { userId } = await requirePlanner(ctx, plannerId);
+    assertDate(start);
+    const loaded = await loadSlots(ctx, plannerId, addDays(start, -6), addDays(start, 6));
+    const slots = await Promise.all(
+      loaded.map(async ({ row, slot }) => {
+        const view: typeof slotViewValidator.type = {
+          date: slot.date,
+          meal: slot.meal,
+          type: slot.type,
+          name: slot.name,
+          ...(slot.from === undefined ? {} : { from: slot.from }),
+        };
+        if (row.type === "cook" && row.recipeId !== undefined) {
+          const recipe = await ctx.db.get(row.recipeId);
+          const available =
+            recipe !== null &&
+            recipe.deletedAt === undefined &&
+            (await canAccessRecipe(ctx, userId, recipe));
+          const ingredients = available
+            ? await ctx.db
+                .query("recipeIngredients")
+                .withIndex("by_recipe", (q) => q.eq("recipeId", row.recipeId!))
+                .take(INGREDIENT_COUNT_LIMIT)
+            : [];
+          view.recipe = { recipeId: row.recipeId, ingredientCount: ingredients.length, available };
+        }
+        return view;
+      }),
+    );
+    return { slots };
+  },
+});
+
+/** Autocomplete: saved recipe titles and the planner's meal names, once each. */
+export const suggestions = query({
+  args: { plannerId: v.id("planners") },
+  returns: v.array(v.string()),
+  handler: async (ctx, { plannerId }) => {
+    const { userId } = await requirePlanner(ctx, plannerId);
+    const names = new Map<string, string>();
+    const saved = await ctx.db
+      .query("savedRecipes")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .order("desc")
+      .take(SUGGESTION_LIMIT);
+    for (const item of saved) {
+      const recipe = await ctx.db.get(item.recipeId);
+      if (recipe === null || recipe.deletedAt !== undefined) continue;
+      const name = cleanName(recipe.title);
+      if (!names.has(mealKey(name))) names.set(mealKey(name), name);
+    }
+    const meals = await ctx.db
+      .query("plannerMeals")
+      .withIndex("by_planner_and_key", (q) => q.eq("plannerId", plannerId))
+      .take(SUGGESTION_LIMIT);
+    for (const meal of meals) if (!names.has(meal.key)) names.set(meal.key, meal.name);
+    return [...names.values()].sort((first, second) => first.localeCompare(second));
   },
 });
