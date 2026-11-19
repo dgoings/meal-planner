@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { ListPlus, MoreHorizontal, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ListPlus, MoreHorizontal, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ export function GroceryListActions({ listId, listName }: { listId: string; listN
   const lists = useQuery(api.groceryLists.listMine);
   const combineLists = useMutation(api.groceryLists.combineLists);
   const removeList = useMutation(api.groceryLists.removeList);
+  const updateList = useMutation(api.groceryLists.updateList);
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuId = useId();
@@ -33,7 +34,7 @@ export function GroceryListActions({ listId, listName }: { listId: string; listN
   useEffect(() => {
     if (!menuOpen) return;
     const items = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
-    items?.[initialMenuIndex.current]?.focus();
+    items?.[initialMenuIndex.current < 0 ? items.length - 1 : initialMenuIndex.current]?.focus();
     function dismissOutside(event: PointerEvent) {
       if (event.target instanceof Node && !containerRef.current?.contains(event.target)) {
         setMenuOpen(false);
@@ -46,15 +47,18 @@ export function GroceryListActions({ listId, listName }: { listId: string; listN
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [otherListId, setOtherListId] = useState("");
   const [combinedName, setCombinedName] = useState("");
-  const [working, setWorking] = useState<"combine" | "delete" | null>(null);
+  const [working, setWorking] = useState<"combine" | "delete" | "archive" | null>(null);
   const [error, setError] = useState("");
+  const [menuError, setMenuError] = useState("");
   const [requestId] = useState(() => crypto.randomUUID());
   const otherLists = useMemo(
-    () => lists?.filter((list) => list._id !== listId) ?? [],
+    () =>
+      lists?.filter((list) => list._id !== listId && list.status !== "archived") ?? [],
     [listId, lists],
   );
   const selectedOtherListId = otherListId;
   const currentList = lists?.find((list) => list._id === listId);
+  const isArchived = currentList?.status === "archived";
 
   function suggestedName(otherId: string) {
     const otherList = otherLists.find((list) => list._id === otherId);
@@ -79,6 +83,26 @@ export function GroceryListActions({ listId, listName }: { listId: string; listN
       router.push(`/app/grocery-lists/${combinedListId}`);
     } catch {
       setError("Couldn’t combine these lists. Please try again.");
+      setWorking(null);
+    }
+  }
+
+  async function setArchived(archived: boolean) {
+    setMenuError("");
+    setWorking("archive");
+    try {
+      await updateList({
+        listId: listId as Id<"groceryLists">,
+        status: archived ? "archived" : "active",
+      });
+      if (archived) router.replace("/app/grocery-lists");
+    } catch {
+      setMenuError(
+        archived
+          ? "Couldn’t archive this list. Please try again."
+          : "Couldn’t restore this list. Please try again.",
+      );
+    } finally {
       setWorking(null);
     }
   }
@@ -115,12 +139,13 @@ export function GroceryListActions({ listId, listName }: { listId: string; listN
           id={`${menuId}-trigger`}
           onClick={() => {
             initialMenuIndex.current = 0;
+            setMenuError("");
             setMenuOpen((open) => !open);
           }}
           onKeyDown={(event) => {
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
-              initialMenuIndex.current = event.key === "ArrowUp" ? 1 : 0;
+              initialMenuIndex.current = event.key === "ArrowUp" ? -1 : 0;
               setMenuOpen(true);
             }
           }}
@@ -159,20 +184,36 @@ export function GroceryListActions({ listId, listName }: { listId: string; listN
               items[next]?.focus();
             }}
           >
+            {!isArchived && (
+              <button
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-surface-subtle"
+                role="menuitem"
+                tabIndex={-1}
+                onClick={() => {
+                  setMenuOpen(false);
+                  setError("");
+                  setOtherListId("");
+                  setCombinedName("");
+                  setCombineOpen(true);
+                }}
+              >
+                <ListPlus size={17} />
+                Combine lists
+              </button>
+            )}
             <button
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-surface-subtle"
               role="menuitem"
               tabIndex={-1}
+              disabled={working === "archive"}
               onClick={() => {
                 setMenuOpen(false);
-                setError("");
-                setOtherListId("");
-                setCombinedName("");
-                setCombineOpen(true);
+                focusTrigger();
+                void setArchived(!isArchived);
               }}
             >
-              <ListPlus size={17} />
-              Combine lists
+              {isArchived ? <ArchiveRestore size={17} /> : <Archive size={17} />}
+              {isArchived ? "Restore list" : "Archive list"}
             </button>
             <button
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-bold text-red-700 hover:bg-red-50"
@@ -188,6 +229,14 @@ export function GroceryListActions({ listId, listName }: { listId: string; listN
               Delete list
             </button>
           </div>
+        )}
+        {menuError && !menuOpen && (
+          <p
+            className="absolute right-0 top-11 z-20 w-56 rounded-xl border border-border bg-white p-3 text-sm font-bold text-red-700 shadow-lg"
+            role="alert"
+          >
+            {menuError}
+          </p>
         )}
       </div>
 
@@ -267,8 +316,9 @@ export function GroceryListActions({ listId, listName }: { listId: string; listN
         <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); focusTrigger(); }}>
           <DialogTitle>Delete this grocery list?</DialogTitle>
           <DialogDescription>
-            This removes the list and its items from your Grocery lists tab. It
-            does not delete any recipes.
+            This permanently deletes the list and its items. It does not delete
+            any recipes. To keep the list but move it out of the way, archive
+            it instead.
           </DialogDescription>
           {error && (
             <p className="mt-3 text-sm font-bold text-red-700" role="alert">

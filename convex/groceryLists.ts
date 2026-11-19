@@ -353,13 +353,15 @@ export const createFromRecipe = mutation({
     const multiplier = validatedServingsMultiplier(servingsMultiplier);
 
     if (!forceNew) {
-      const existing = await ctx.db
+      // An archived list is out of the way on purpose, so it is never reused.
+      const candidates = await ctx.db
         .query("groceryLists")
         .withIndex("by_user_and_source_recipe", (q) =>
           q.eq("userId", userId).eq("sourceRecipeId", recipeId),
         )
-        .first();
-      if (existing !== null) return existing._id;
+        .take(50);
+      const existing = candidates.find((list) => list.status !== "archived");
+      if (existing !== undefined) return existing._id;
     }
 
     const recipeIngredients = await ctx.db

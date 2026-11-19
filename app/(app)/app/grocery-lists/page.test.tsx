@@ -1,8 +1,11 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import GroceryListsPage from "./page";
 
 vi.mock("@/convex/_generated/api", () => ({ api: { groceryLists: { listMine: "listMine", itemProgress: "itemProgress", summary: "summary" } } }));
+
+const mocks = vi.hoisted(() => ({ extraLists: [] as unknown[] }));
 
 vi.mock("convex/react", () => ({
   useQuery: (query: string) => {
@@ -16,6 +19,7 @@ vi.mock("convex/react", () => ({
           createdAt: 1,
           updatedAt: 2,
         },
+        ...mocks.extraLists,
       ];
   },
   useMutation: () => vi.fn(),
@@ -26,6 +30,35 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("GroceryListsPage", () => {
+  afterEach(() => {
+    mocks.extraLists = [];
+  });
+
+  it("keeps archived lists in a collapsed section", async () => {
+    const user = userEvent.setup();
+    mocks.extraLists = [
+      { _id: "list-old", name: "Last month", status: "archived", createdAt: 1, updatedAt: 2 },
+    ];
+    render(<GroceryListsPage />);
+
+    expect(screen.getByRole("link", { name: "Open Weekend trip" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open Last month" })).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Archived lists (1)" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Open Last month" })).toHaveAttribute(
+      "href",
+      "/app/grocery-lists/list-old",
+    );
+    expect(screen.getByText("Archived")).toBeInTheDocument();
+  });
+
+  it("hides the archived section when nothing is archived", () => {
+    render(<GroceryListsPage />);
+    expect(screen.queryByRole("button", { name: /Archived lists/ })).not.toBeInTheDocument();
+  });
+
   it("uses the new-list route for both creation entry points", () => {
     render(<GroceryListsPage />);
 

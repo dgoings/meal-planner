@@ -2027,6 +2027,32 @@ describe("grocery list validation branches", () => {
     ).rejects.toThrow(/Servings multiplier/);
   });
 
+  it("archives and restores a list, and starts a fresh recipe list instead of reusing an archived one", async () => {
+    const t = initTest();
+    const ownerId = await createSignedInUser(t, "ArchivingCook");
+    const asOwner = sessionOf(t, ownerId);
+    const recipeId = await createRecipe(t, "archived-soup", { requestedBy: ownerId });
+    await t.run(async (ctx) => {
+      await ctx.db.insert("recipeIngredients", { recipeId, position: 1, originalText: "2 carrots", name: "Carrots", normalizedName: "carrots", quantity: 2, isOptional: false });
+    });
+
+    const listId = await asOwner.mutation(api.groceryLists.createFromRecipe, { recipeId });
+    await asOwner.mutation(api.groceryLists.updateList, { listId, status: "archived" });
+    const archived = await asOwner.query(api.groceryLists.get, { listId });
+    expect(archived?.list.status).toBe("archived");
+    expect(archived?.items).toHaveLength(1);
+    await expect(
+      asOwner.mutation(api.groceryLists.addRecipeToList, { recipeId, listId }),
+    ).rejects.toThrow(/active grocery lists/);
+
+    const freshListId = await asOwner.mutation(api.groceryLists.createFromRecipe, { recipeId });
+    expect(freshListId).not.toBe(listId);
+    expect(await asOwner.mutation(api.groceryLists.createFromRecipe, { recipeId })).toBe(freshListId);
+
+    await asOwner.mutation(api.groceryLists.updateList, { listId, status: "active" });
+    expect((await asOwner.query(api.groceryLists.get, { listId }))?.list.status).toBe("active");
+  });
+
   it("keeps items the saving client never loaded and deletes explicit removals", async () => {
     const t = initTest();
     const ownerId = await createSignedInUser(t, "StaleEditorCook");

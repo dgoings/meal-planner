@@ -1,11 +1,16 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SavedGroceryList } from "./saved-grocery-list";
 
-const mocks = vi.hoisted(() => ({ queryResult: undefined as unknown }));
+const mocks = vi.hoisted(() => ({
+  queryResult: undefined as unknown,
+  updateList: vi.fn(),
+}));
 
 vi.mock("convex/react", () => ({
   useQuery: () => mocks.queryResult,
+  useMutation: () => mocks.updateList,
 }));
 
 vi.mock("@/components/grocery/grocery-list-editor", () => ({
@@ -39,6 +44,32 @@ vi.mock("@/components/grocery/grocery-list-editor", () => ({
 describe("SavedGroceryList", () => {
   beforeEach(() => {
     mocks.queryResult = undefined;
+    mocks.updateList.mockReset();
+  });
+
+  it("offers to restore an archived list", async () => {
+    const user = userEvent.setup();
+    mocks.updateList.mockResolvedValueOnce(null);
+    mocks.queryResult = {
+      list: { _id: "list-1", name: "Old trip", status: "archived" },
+      items: [],
+      itemSources: [],
+    };
+    render(<SavedGroceryList listId="list-1" />);
+
+    expect(screen.getByText("This list is archived.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Restore list" }));
+    expect(mocks.updateList).toHaveBeenCalledWith({ listId: "list-1", status: "active" });
+  });
+
+  it("shows no archive notice on an active list", () => {
+    mocks.queryResult = {
+      list: { _id: "list-1", name: "This week", status: "active" },
+      items: [],
+      itemSources: [],
+    };
+    render(<SavedGroceryList listId="list-1" />);
+    expect(screen.queryByText("This list is archived.")).not.toBeInTheDocument();
   });
 
   it("shows loading and not-found states", () => {

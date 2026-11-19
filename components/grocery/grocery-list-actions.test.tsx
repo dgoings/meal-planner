@@ -6,17 +6,20 @@ import { GroceryListActions } from "./grocery-list-actions";
 const mocks = vi.hoisted(() => ({
   combineLists: vi.fn(),
   removeList: vi.fn(),
+  updateList: vi.fn(),
+  lists: [] as Array<{ _id: string; name: string; status?: string }>,
   push: vi.fn(),
   replace: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
-  useQuery: () => [
-    { _id: "list-1", name: "Dinner" },
-    { _id: "list-2", name: "Weekend" },
-  ],
+  useQuery: () => mocks.lists,
   useMutation: (reference: string) =>
-    reference === "combineLists" ? mocks.combineLists : mocks.removeList,
+    reference === "combineLists"
+      ? mocks.combineLists
+      : reference === "updateList"
+        ? mocks.updateList
+        : mocks.removeList,
 }));
 
 vi.mock("@/convex/_generated/api", () => ({
@@ -25,6 +28,7 @@ vi.mock("@/convex/_generated/api", () => ({
       listMine: "listMine",
       combineLists: "combineLists",
       removeList: "removeList",
+      updateList: "updateList",
     },
   },
 }));
@@ -37,6 +41,11 @@ describe("GroceryListActions", () => {
   beforeEach(() => {
     mocks.combineLists.mockReset();
     mocks.removeList.mockReset();
+    mocks.updateList.mockReset();
+    mocks.lists = [
+      { _id: "list-1", name: "Dinner" },
+      { _id: "list-2", name: "Weekend" },
+    ];
     mocks.push.mockReset();
     mocks.replace.mockReset();
   });
@@ -83,9 +92,12 @@ describe("GroceryListActions", () => {
     trigger.focus();
     await user.keyboard("{Enter}");
     const combine = screen.getByRole("menuitem", { name: "Combine lists" });
+    const archive = screen.getByRole("menuitem", { name: "Archive list" });
     const remove = screen.getByRole("menuitem", { name: "Delete list" });
     expect(combine).toHaveFocus();
     expect(screen.getByRole("menu", { name: "More options for Dinner" })).toHaveAttribute("id", trigger.getAttribute("aria-controls"));
+    await user.keyboard("{ArrowDown}");
+    expect(archive).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(remove).toHaveFocus();
     await user.keyboard("{ArrowDown}");
@@ -131,6 +143,65 @@ describe("GroceryListActions", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(trigger).toHaveFocus();
+  });
+
+  it("archives a list without confirmation and returns to the overview", async () => {
+    const user = userEvent.setup();
+    mocks.updateList.mockResolvedValueOnce(null);
+    render(<GroceryListActions listId="list-1" />);
+
+    await user.click(screen.getByRole("button", { name: "More list options" }));
+    await user.click(screen.getByRole("menuitem", { name: "Archive list" }));
+
+    expect(mocks.updateList).toHaveBeenCalledWith({ listId: "list-1", status: "archived" });
+    expect(mocks.removeList).not.toHaveBeenCalled();
+    expect(mocks.replace).toHaveBeenCalledWith("/app/grocery-lists");
+  });
+
+  it("offers restore instead of archive and combine on an archived list", async () => {
+    const user = userEvent.setup();
+    mocks.lists = [
+      { _id: "list-1", name: "Dinner", status: "archived" },
+      { _id: "list-2", name: "Weekend", status: "active" },
+    ];
+    mocks.updateList.mockResolvedValueOnce(null);
+    render(<GroceryListActions listId="list-1" />);
+
+    await user.click(screen.getByRole("button", { name: "More list options" }));
+    expect(screen.queryByRole("menuitem", { name: "Combine lists" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Archive list" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Restore list" }));
+
+    expect(mocks.updateList).toHaveBeenCalledWith({ listId: "list-1", status: "active" });
+    expect(mocks.replace).not.toHaveBeenCalled();
+  });
+
+  it("leaves archived lists out of the combine choices", async () => {
+    const user = userEvent.setup();
+    mocks.lists = [
+      { _id: "list-1", name: "Dinner", status: "active" },
+      { _id: "list-2", name: "Weekend", status: "archived" },
+      { _id: "list-3", name: "Party", status: "active" },
+    ];
+    render(<GroceryListActions listId="list-1" />);
+
+    await user.click(screen.getByRole("button", { name: "More list options" }));
+    await user.click(screen.getByRole("menuitem", { name: "Combine lists" }));
+
+    expect(screen.getByRole("option", { name: "Party" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Weekend" })).not.toBeInTheDocument();
+  });
+
+  it("reports a failed archive", async () => {
+    const user = userEvent.setup();
+    mocks.updateList.mockRejectedValueOnce(new Error("offline"));
+    render(<GroceryListActions listId="list-1" />);
+
+    await user.click(screen.getByRole("button", { name: "More list options" }));
+    await user.click(screen.getByRole("menuitem", { name: "Archive list" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t archive this list");
+    expect(mocks.replace).not.toHaveBeenCalled();
   });
 
   it("confirms deletion and returns to the grocery-list overview", async () => {

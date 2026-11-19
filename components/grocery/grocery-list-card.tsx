@@ -2,7 +2,7 @@
 
 import { useQuery } from "convex/react";
 import Link from "next/link";
-import { ArrowRight, CalendarDays, CheckCircle2, ShoppingBasket } from "lucide-react";
+import { Archive, ArrowRight, CalendarDays, CheckCircle2, ShoppingBasket } from "lucide-react";
 import { GroceryListActions } from "@/components/grocery/grocery-list-actions";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/convex/_generated/api";
@@ -12,6 +12,9 @@ export function GroceryListCard({ list }: { list: Doc<"groceryLists"> }) {
   const summary = useQuery(api.groceryLists.summary, { listId: list._id });
   const progress = useQuery(api.groceryLists.itemProgress, { listId: list._id });
   const remaining = progress ? progress.total - progress.checked : undefined;
+  const isArchived = list.status === "archived";
+  const showComplete = !isArchived && summary?.isComplete === true;
+  const hasLabel = isArchived || showComplete;
 
   return (
     <Card className="recipe-card relative h-64 min-w-0">
@@ -27,14 +30,20 @@ export function GroceryListCard({ list }: { list: Doc<"groceryLists"> }) {
           <span className="grid size-12 place-items-center rounded-xl bg-primary-soft text-primary">
             <ShoppingBasket />
           </span>
-          {summary?.isComplete && (
+          {isArchived && (
+            <p className="mt-4 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[.08em] text-muted-foreground">
+              <Archive size={15} />
+              Archived
+            </p>
+          )}
+          {showComplete && (
             <p className="mt-4 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[.08em] text-primary">
               <CheckCircle2 size={15} />
               List Completed
             </p>
           )}
           <h2
-            className={`${summary?.isComplete ? "mt-2" : "mt-5"} truncate text-xl font-extrabold`}
+            className={`${hasLabel ? "mt-2" : "mt-5"} truncate text-xl font-extrabold`}
             title={list.name}
           >
             {list.name}
