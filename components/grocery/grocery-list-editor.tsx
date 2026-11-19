@@ -224,7 +224,9 @@ export function GroceryListEditor({
   const showBar = isPhone && canSave && dirty && saveState !== "saved";
 
   return (
-    <div className={`grid gap-6 xl:grid-cols-[1fr_320px]${showBar ? " has-unsaved-bar" : ""}`}>
+    // Below xl this is a flex column rather than a grid: a sticky grid item can
+    // only travel within its own row, which would pin the summary in place.
+    <div className={`flex flex-col gap-6 xl:grid xl:grid-cols-[1fr_320px]${showBar ? " has-unsaved-bar" : ""}`}>
       <div className="stack">
         <Card>
           <CardContent className="grocery-head stack">
@@ -322,28 +324,44 @@ export function GroceryListEditor({
           </section>
         ))}
       </div>
-      <aside className="stack self-start xl:sticky xl:top-20">
+      {/* Floats above the mobile nav (and the unsaved-changes bar, when shown)
+          below md, at the viewport bottom up to xl, then becomes the sticky sidebar. */}
+      <aside
+        className={`stack sticky z-30 md:bottom-4 xl:bottom-auto xl:top-20 xl:self-start ${
+          showBar
+            ? "bottom-[calc(8.25rem+env(safe-area-inset-bottom))]"
+            : "bottom-[calc(4.25rem+env(safe-area-inset-bottom))]"
+        }`}
+      >
         <Card>
-          <CardContent>
-            <p className="eyebrow">List summary</p>
-            <p className="font-display text-4xl font-semibold">
-              {items.filter((item) => !item.checked).length}
-            </p>
-            <p className="text-sm text-muted-foreground">items left to pick up</p>
-            <div className="mt-5 h-2 overflow-hidden rounded-full bg-surface-subtle">
-              <div
-                className="h-full bg-primary"
-                style={{
-                  width: `${items.length ? (items.filter((item) => item.checked).length / items.length) * 100 : 0}%`,
-                }}
-              />
+          <div className="px-4 py-3 xl:p-5">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 xl:block">
+              <div className="flex items-baseline gap-2 xl:block">
+                <p className="eyebrow hidden xl:block">List summary</p>
+                <p className="font-display text-2xl font-semibold xl:text-4xl">
+                  {items.filter((item) => !item.checked).length}
+                </p>
+                <p className="text-sm text-muted-foreground">items left to pick up</p>
+              </div>
+              <div className="col-span-2 row-start-2 h-2 overflow-hidden rounded-full bg-surface-subtle xl:mt-5">
+                <div
+                  className="h-full bg-primary"
+                  style={{
+                    width: `${items.length ? (items.filter((item) => item.checked).length / items.length) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+              {canSave && (
+                <Button
+                  className="col-start-2 row-start-1 xl:mt-5 xl:w-full"
+                  onClick={persistList}
+                  disabled={saveDisabled}
+                >
+                  <Save size={17} />
+                  {saveLabel}
+                </Button>
+              )}
             </div>
-            {canSave && (
-              <Button className="mt-5 w-full" onClick={persistList} disabled={saveDisabled}>
-                <Save size={17} />
-                {saveLabel}
-              </Button>
-            )}
             {saveState === "saved" && (
               <p className="mt-3 text-sm font-bold text-primary" role="status">
                 List saved.
@@ -362,7 +380,7 @@ export function GroceryListEditor({
                 Couldn&apos;t save this list. Try again.
               </p>
             )}
-          </CardContent>
+          </div>
         </Card>
         {removed && (
           <div
